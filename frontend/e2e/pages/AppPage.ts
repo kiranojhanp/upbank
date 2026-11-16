@@ -113,6 +113,15 @@ export class AppPage {
     await expect(this.page.locator('#week-section')).toBeVisible()
   }
 
+  async openBackup(): Promise<void> {
+    await this.page.getByRole('button', { name: 'Backup data', exact: true }).click()
+    const dialog = this.page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(
+      dialog.getByRole('heading', { name: 'Backup & restore', exact: true }),
+    ).toBeVisible()
+  }
+
   async openPlan(): Promise<void> {
     await this.page.getByRole('button', { name: 'Week', exact: true }).click()
     await this.page.getByRole('button', { name: 'Recurring expenses', exact: true }).click()

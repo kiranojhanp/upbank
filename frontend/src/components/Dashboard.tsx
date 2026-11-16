@@ -16,6 +16,7 @@ import type { TransactionsSeed } from '../pagination'
 import { useDocumentVisible, useOnlineStatus } from '../useOnlineStatus'
 import { downloadBlob } from '../download'
 import { AccountCard, SidebarBrand } from './AccountCard'
+import { BackupDialog } from './BackupDialog'
 import { Filters } from './Filters'
 import { PlanView } from './PlanView'
 import { WeekView } from './WeekView'
@@ -84,6 +85,7 @@ function EyeClosedIcon() {
 
 export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: DashboardProps) {
   const [view, setView] = useState<'accounts' | 'week' | 'plan'>('week')
+  const [backupOpen, setBackupOpen] = useState(false)
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [draftFilters, setDraftFilters] = useState<TransactionFilters>({})
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
@@ -457,6 +459,13 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
+            <button
+              type="button"
+              className="logout-link"
+              onClick={() => setBackupOpen(true)}
+            >
+              Backup data
+            </button>
             {cacheAvailable && (
               <button
                 type="button"
@@ -549,6 +558,9 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
 
       <Toasts items={toasts} onDismiss={dismissToast} />
 
+      {backupOpen && (
+        <BackupDialog uid={uid} onClose={() => setBackupOpen(false)} />
+      )}
     </>
   )
 }

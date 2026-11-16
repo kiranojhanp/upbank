@@ -42,6 +42,7 @@ jobs:
           npm run test:csv
           npm run test:budget
           npm run test:week
+          npm run test:backup
           npm run test:security
           npm run test:pagination
           npm run test:persistence

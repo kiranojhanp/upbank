@@ -6,6 +6,7 @@ frontend/dist/
 frontend/.csv-check/
 frontend/.budget-check/
 frontend/.week-check/
+frontend/.backup-check/
 frontend/.persistence-smoke/
 frontend/.security-check/
 frontend/.pagination-check/
