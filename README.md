@@ -5,10 +5,10 @@ weekly budgeting workspace. It is a **static, frontend-only** React single-page 
 browser talks to the Up API directly and caches what it fetches on the device. There is no
 server to run.
 
-The budgeting side opens on the current **Wednesday–Tuesday** week. Budget entries are
-seeded from a recurring set-aside plan, actual Up transactions are attached to the selected
-entry by clicking them, and the week shows what is planned, spent, left and still
-unassigned.
+The budgeting side opens on the current **Wednesday–Tuesday** week. It lists the recurring
+expenses whose occurrence falls in that week. Marking one paid asks you to choose the Up
+transaction that paid it; the occurrence then leaves the week, and the next occurrence
+appears in its own week.
 
 > Not affiliated with Up. Your personal access token can read and categorise your banking
 > data — use at your own risk, ideally with a short-lived token.
@@ -25,13 +25,14 @@ unassigned.
 ## Features
 
 - Sign in with your Up Banking Personal Access Token
-- Weekly budget (the home view): a Wednesday–Tuesday calendar with previous/next week,
-  planned/spent/left/unassigned totals, an editable entry list seeded from the recurring
-  plan, and a detail pane where clicking a real Up transaction attaches it to the selected
-  entry (entries and links are local; transaction details are read live for the week)
-- Set-aside plan (the template): local-first recurring bills and spending lines using the
-  sheet's weekly set-aside, one-off catch-up, fortnightly pay split and annual total, with
-  weeks-until-due, a "mark paid" date roller, and Google Sheets/CSV import and export
+- Weekly recurring expenses (the home view): a Wednesday–Tuesday calendar with
+  previous/next week, the expenses due in that week, due/paid totals and the plan's weekly
+  set-aside. Mark paid opens this week's Up debit transactions; the paid occurrence leaves
+  the week, and the next occurrence appears in its own week
+- Recurring expenses (the set-aside template): start date + frequency, weekly set-aside,
+  one-off catch-up, fortnightly split and annual total; add, edit, bulk-select and delete,
+  or import/export Google Sheets/CSV. Legacy "Next Due Date" sheets are accepted as start
+  dates
 - View all account balances (including 2Up joint accounts)
 - Click an account to view transactions grouped by date
 - Filter transactions by status (settled/pending) and date range
@@ -82,8 +83,8 @@ infinite query and mirrored into a local-only TanStack DB collection:
 | `accounts` | account id | Up `GET /accounts` |
 | transaction pages | `['transactions', account, status, since, until]` | Up `GET /accounts/{id}/transactions` |
 | `transactions:<account>:<filters>` | transaction id | local-only row mirror of the pages above |
-| set-aside plan | `up:plan:<uid>` in `localStorage` | user-authored: pasted from Sheets or added in the app |
-| weekly budget | `up:week:<uid>` in `localStorage` | user-authored entries + transaction-id → entry-id links |
+| recurring-expense plan | `up:plan:<uid>` in `localStorage` | user-authored: pasted from Sheets or added in the app |
+| paid occurrences | `up:paid:<uid>` in `localStorage` | expense id + occurrence date → Up transaction id |
 
 - `useInfiniteQuery` owns the cursor sequence, `hasNextPage`, page freshness, retry and
   refetching. `getNextPageParam` follows Up's cursor for a fresh sequence.
@@ -102,41 +103,43 @@ infinite query and mirrored into a local-only TanStack DB collection:
   (sign out, a rejected token, or a 401/403) drops the whole store and wipes its rows,
   rather than scrubbing rows from a client that still has query observers attached.
 
-### Weekly budgets
+### Weekly recurring expenses
 
-The home view is the current Wednesday–Tuesday week. Its entries are derived live from the
-recurring plan: one entry per plan row, with the row's weekly set-aside as the planned
-amount. The first edit, added entry or transaction attachment materialises that week in
-`up:week:<uid>`, so later plan changes do not rewrite a week that has already been worked
-on. Entries can be renamed, re-budgeted or deleted for that week without touching the plan.
+Each plan row has a **start date** and a frequency. An occurrence is generated at the first
+eligible date on or after the week's Wednesday; because the fastest frequency is weekly,
+there is at most one occurrence per expense per week. The Week view lists the unpaid
+occurrences for the selected week, sorted by due date and then plan order.
 
-The detail pane fetches the week's **debit** transactions across every Up account, then:
+Marking an occurrence paid opens a transaction picker. It fetches the week's **debit**
+transactions across every Up account and requires choosing one before the payment is
+recorded. A paid occurrence is hidden from that week. The next occurrence is generated
+independently, so:
 
-- shows the transactions attached to the selected entry, with an `×` to detach;
-- shows the rest of the week's spending; clicking one attaches it to the selected entry, or
-  moves it from another entry;
-- counts spending that is not attached anywhere as **unassigned**, and includes it in the
-  week's left-over figure.
+- a weekly expense disappears this week and returns next week;
+- a fortnightly expense returns two weeks later;
+- a monthly, quarterly or annual expense returns at its next period.
 
-Only the transaction-id → entry-id links are persisted. Descriptions, amounts and account
-names are fetched for the active week and are never written into the week record, so this
-view does not create another copy of banking data at rest. Offline, entries and links remain
-visible but transaction details wait for a connection. Up to two years of weekly records are
-kept, pruned on write.
+The paid record is keyed by expense id + occurrence date and stores the transaction id only.
+Descriptions, amounts and account names are read live for the week and are never written
+into `up:paid:<uid>`. Paid records are capped at 5,000, and deleting an expense or the plan
+removes its paid history. Offline, the due list remains usable from the plan, but marking
+paid waits for the transaction list.
 
 ### The set-aside plan
 
-The plan is the recurring template behind those weeks. Bills are authored by the person
+The plan is the recurring template behind those weeks. Expenses are authored by the person
 using the app rather than fetched from Up, so they live in one small versioned
 `localStorage` record per token fingerprint (`up:plan:<uid>`), not in an OPFS collection.
-It has its own **Delete plan** action, and the render-error recovery path removes all `up:`
-keys.
+The list supports multi-select and bulk delete; deleting one expense or the whole plan also
+removes its paid history, and the render-error recovery path removes all `up:` keys.
 
-The maths is a direct port of the sheet, with the same rounding:
+The maths is a direct port of the sheet, with the same rounding. The next occurrence is now
+derived from the start date:
 
 ```
+next due         = first occurrence on or after today, from the start date
 weekly set-aside = billed amount × (payments per year ÷ 52)
-weeks until due  = max(0, floor((due date − today) ÷ 7))
+weeks until due  = max(0, floor((next due − today) ÷ 7))
 one-off catch-up = max(0, round(amount − (weekly set-aside × weeks), 2))
 ```
 
@@ -145,15 +148,16 @@ Weekly, fortnightly, monthly, quarterly, biannual and annual bills use 52, 26, 1
 fortnightly split is twice that, and the annual total is the exact sum of each bill's
 yearly cost, so the four headline numbers match the sheet to the cent. Dates are stored as
 `YYYY-MM-DD` and compared at UTC midnight, so a daylight-saving change cannot make a bill
-look a day early. A month-end due date clamps (31 Jan → 28/29 Feb) when "mark paid" rolls
-it forward.
+look a day early. Month stepping is always computed from the original start date, so a
+31 Jan monthly expense stays on the 31st after clamping to 28/29 Feb.
 
 Import accepts rows copied from Google Sheets (tab-separated) or a CSV export. It finds a
-header anywhere in the first ten rows, maps name/amount/frequency/due by column name, and
-ignores the sheet's calculated columns. Dates can be ISO, Australian (`19/11/2026`) or
-written (`19 Nov 2026`). Invalid rows are reported by row number and skipped rather than
-silently imported. Export writes the same seven columns as the sheet, including the
-computed values, with the transaction export's spreadsheet-formula guard applied to names.
+header anywhere in the first ten rows, maps name/amount/frequency/start-date by column
+name, and ignores the sheet's calculated columns. A legacy "Next Due Date" column is
+accepted as the start date. Dates can be ISO, Australian (`19/11/2026`) or written
+(`19 Nov 2026`). Invalid rows are reported by row number and skipped rather than silently
+imported. Export writes name, amount, frequency, start date and weekly set-aside, with the
+transaction export's spreadsheet-formula guard applied to names.
 
 ### The local cache (OPFS SQLite)
 
@@ -275,12 +279,12 @@ Residual risks that cannot be fixed from inside a static SPA:
   the previous token fingerprint instead of leaving an orphaned copy.
 - Sign-out clears the token, wipes the OPFS database (including sidecars) and removes the
   cached cursor/category metadata.
-- The set-aside plan (`up:plan:<uid>`) and weekly budgets (`up:week:<uid>`) survive
-  sign-out. They hold user-authored budgets and transaction-id → entry-id links only, not
-  descriptions, amounts or other transaction content, and are namespaced by the same token
-  fingerprint. Remove them with **Delete plan**, by deleting entries, or via the render-error
-  reset. Both are stored unencrypted like the rest of the cache, so the browser profile
-  remains the only protection.
+- The recurring-expense plan (`up:plan:<uid>`) and paid occurrences (`up:paid:<uid>`)
+  survive sign-out. The paid record holds expense/occurrence ids and a transaction id only,
+  not descriptions, amounts or other transaction content, and is namespaced by the same
+  token fingerprint. Deleting the plan or an expense removes the matching paid history;
+  the render-error reset removes all of it. Both are stored unencrypted like the rest of
+  the cache, so the browser profile remains the only protection.
 - A 401/403, or a token rejected at boot, does the same wipe. A dead token can never
   authenticate again, so retaining its rows would only leave data at rest.
 - A `storage` event for the token key reloads other tabs. Signing out (or switching
@@ -309,9 +313,9 @@ Residual risks that cannot be fixed from inside a static SPA:
   bearer token to another origin.
 - Persisted envelope metadata (cursor, category names, row count) is revalidated as
   untrusted input and rebuilt into a null-prototype map before use.
-- Stored weekly budgets are validated entry by entry; a transaction link is only kept when
-  it points at an entry in the same week, and no transaction description or amount is written
-  to that record.
+- Stored paid occurrences are validated record by record: the key must match the expense id
+  and occurrence date, and only a transaction id is kept — no description, amount or account
+  name is written to that record.
 - CSV exports neutralise spreadsheet formula triggers (`=`, `+`, `-`, `@`, tab, CR/LF, even
   after leading whitespace or a BOM), escape quotes/commas/newlines, and only treat a
   strict decimal amount as numeric. Filenames are reduced to letters, digits, spaces, `_`
@@ -400,7 +404,7 @@ frontend/
     fixtures.ts          Per-test Up API mock + app page object
     pages/AppPage.ts     Role-based app page object
     support/up-api.ts    Stateful fake of the Up API
-    specs/               auth, transactions, weekly budget, offline/PWA, security, responsive
+    specs/               auth, transactions, weekly recurring expenses, offline/PWA, security, responsive
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
     manifest.webmanifest Web app manifest
@@ -410,7 +414,7 @@ frontend/
     db-smoke.mjs         Data-layer test against the real TanStack DB packages
     csv-check.ts         CSV columns, escaping and formula-injection guard
     budget-check.ts      Plan formula parity, date handling, import and validation
-    week-check.ts        Wed–Tue maths, seeded entries, attachment totals, week validation
+    week-check.ts        Wed–Tue maths, start-date occurrences, due/paid totals, paid validation
     persistence-smoke.ts Cache fallback when OPFS is unavailable
     security-check.ts    Token input validation
     pagination-check.ts  Cursor anchoring, dedupe and exhausted-cache behaviour
@@ -427,9 +431,9 @@ frontend/
     envelopeStore.ts     Cursor, category map, oldest timestamp and cache TTL
     budget.ts            Plan maths, date/frequency handling and Sheets/CSV import/export
     planStore.ts         Per-user set-aside plan in localStorage (validation, write, clear)
-    week.ts              Wed–Tue helpers, seeded entries, attachment summaries
-    weekStore.ts         Per-user weekly budgets and transaction links in localStorage
-    useWeekTransactions.ts  Week-window transaction query across all accounts
+    week.ts              Wed–Tue helpers, start-date occurrences, due/paid summary
+    paidStore.ts         Paid occurrence records (expense/date → transaction id)
+    useWeekTransactions.ts  Week-window debit transaction query across all accounts
     useToday.ts          Local date, refreshed across midnight for week and due dates
     download.ts          Blob download helper shared by the CSV exports
     pagination.ts        Pure page-param/dedupe helpers for the infinite query
@@ -449,10 +453,10 @@ frontend/
       DetailPanel.tsx
       Filters.tsx
       WeekView.tsx        Wed–Tue calendar, week navigation and summaries
-      WeekBoard.tsx       Entry list, selected-entry detail and transaction attachment
-      WeekEntryDialog.tsx Add/edit/remove a week's budget entry
-      PlanView.tsx        Recurring set-aside plan (template) and plan actions
-      PlanFormDialog.tsx  Add/edit an expense with live set-aside preview
+      WeekBoard.tsx       Due list, selected-occurrence detail and mark-paid flow
+      MarkPaidDialog.tsx  Pick the Up transaction that paid an occurrence
+      PlanView.tsx        Recurring expense management, bulk selection and totals
+      PlanFormDialog.tsx  Add/edit an expense with start date and weekly preview
       PlanImportDialog.tsx Paste/CSV import with row-level validation
       PlanModal.tsx       Radix dialog shell themed for the app
       TransactionsView.tsx Infinite query, row mirror, load-more and detail panel
@@ -510,7 +514,7 @@ npm run build
 npm run test:db          # collections, select, orderBy, pagination, teardown
 npm run test:csv         # CSV columns, escaping, formula-injection guard
 npm run test:budget      # Sheet formula parity, dates, import parsing, plan validation
-npm run test:week        # Wed–Tue weeks, seeded entries, attachment totals, week validation
+npm run test:week        # Wed–Tue weeks, start-date occurrences, due/paid totals, paid validation
 npm run test:security    # token input validation and control-character rejection
 npm run test:pagination  # cursor anchoring, dedupe, exhausted restored cache
 npm run test:persistence # cache fallback, envelope TTL/validation, forget a user
@@ -539,8 +543,8 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | `offline.spec.ts` | service worker + OPFS restore on a cold offline reload, then `filter[until]` load-more anchoring |
 | `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
 | `resilience.spec.ts` | empty account state and the mobile navigation drawer |
-| `plan.spec.ts` | recurring plan maths, add/edit/delete, import/export, mark paid, mobile access |
-| `week.spec.ts` | Wed–Tue week, entry edits, attach/move transactions, totals, persistence, narrow layout |
+| `plan.spec.ts` | recurring plan maths, start dates, bulk delete, import/export, mobile access |
+| `week.spec.ts` | due occurrences, transaction picker, paid hiding, next-week recurrence, persistence, narrow layout |
 
 The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel
 with isolated browser contexts (so OPFS and localStorage do not leak between tests),

@@ -115,15 +115,15 @@ export class AppPage {
 
   async openPlan(): Promise<void> {
     await this.page.getByRole('button', { name: 'Week', exact: true }).click()
-    await this.page.getByRole('button', { name: 'Set-aside plan', exact: true }).click()
-    await expect(this.page.getByRole('heading', { name: 'Set-aside plan' })).toBeVisible()
+    await this.page.getByRole('button', { name: 'Recurring expenses', exact: true }).click()
+    await expect(this.page.getByRole('heading', { name: 'Recurring expenses', exact: true })).toBeVisible()
   }
 
   weekEntry(name: string): Locator {
     return this.page.locator('.week-entry').filter({ hasText: name })
   }
 
-  weekStat(stat: 'planned' | 'left' | 'unassigned'): Locator {
+  weekStat(stat: 'due' | 'paid' | 'setaside'): Locator {
     return this.page.locator(`[data-week-stat="${stat}"]`)
   }
 
@@ -136,16 +136,6 @@ export class AppPage {
     })
   }
 
-  async addWeekEntry(entry: { name: string; amount: string }): Promise<void> {
-    await this.page.getByRole('button', { name: 'Add budget entry' }).click()
-    const dialog = this.page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
-    await dialog.getByLabel('Entry name').fill(entry.name)
-    await dialog.getByLabel('Planned for this week').fill(entry.amount)
-    await dialog.getByRole('button', { name: 'Add entry' }).click()
-    await expect(dialog).toHaveCount(0)
-  }
-
   /** Pin the browser clock so weeks-until-due is deterministic. */
   async freezeToday(iso = '2026-11-16T02:00:00.000Z'): Promise<void> {
     await this.page.clock.setFixedTime(new Date(iso))
@@ -156,14 +146,14 @@ export class AppPage {
   }
 
   planRow(name: string): Locator {
-    return this.page.locator('.plan-table tbody tr').filter({ hasText: name })
+    return this.page.locator('.plan-expense-row').filter({ hasText: name })
   }
 
   async addExpense(expense: {
     name: string
     amount: string
     frequency: 'WEEKLY' | 'FORTNIGHTLY' | 'MONTHLY' | 'QUARTERLY' | 'BIANNUALLY' | 'ANNUALLY'
-    due: string
+    start: string
   }): Promise<void> {
     await this.page.getByRole('button', { name: 'Add expense', exact: true }).click()
     const dialog = this.page.getByRole('dialog')
@@ -171,7 +161,7 @@ export class AppPage {
     await dialog.getByLabel('Expense name').fill(expense.name)
     await dialog.getByLabel('Billed amount').fill(expense.amount)
     await dialog.getByLabel('Frequency').selectOption(expense.frequency)
-    await dialog.getByLabel('Next due date').fill(expense.due)
+    await dialog.getByLabel('Start date').fill(expense.start)
     await dialog.getByRole('button', { name: 'Add expense' }).click()
     await expect(dialog).toHaveCount(0)
   }

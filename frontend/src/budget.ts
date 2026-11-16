@@ -60,13 +60,15 @@ export interface PlanRow {
   name: string
   amountCents: number
   frequency: Frequency
-  /** Local calendar date, `YYYY-MM-DD`. */
-  nextDueDate: string
+  /** First occurrence, `YYYY-MM-DD`. Later occurrences follow the frequency. */
+  startDate: string
 }
 
 export interface DerivedRow extends PlanRow {
   /** Exact (possibly fractional) cents per week, before display rounding. */
   weeklyCents: number
+  /** The first occurrence on or after today, derived from `startDate`. */
+  nextDueDate: string
   weeksUntilDue: number
   daysUntilDue: number
   catchUpCents: number
@@ -88,7 +90,7 @@ export interface PlanDraftRow {
   name: string
   amountCents: number
   frequency: Frequency
-  nextDueDate: string
+  startDate: string
 }
 
 export interface ImportIssue {
@@ -197,39 +199,57 @@ export function addMonthsIso(iso: string, months: number): string {
   return isoFromParts(year, month, day)
 }
 
-function addFrequency(iso: string, frequency: Frequency): string {
-  switch (frequency) {
-    case 'WEEKLY':
-      return addDaysIso(iso, 7)
-    case 'FORTNIGHTLY':
-      return addDaysIso(iso, 14)
-    case 'MONTHLY':
-      return addMonthsIso(iso, 1)
-    case 'QUARTERLY':
-      return addMonthsIso(iso, 3)
-    case 'BIANNUALLY':
-      return addMonthsIso(iso, 6)
-    case 'ANNUALLY':
-      return addMonthsIso(iso, 12)
-  }
+const MONTH_STEP: Record<'MONTHLY' | 'QUARTERLY' | 'BIANNUALLY' | 'ANNUALLY', number> = {
+  MONTHLY: 1,
+  QUARTERLY: 3,
+  BIANNUALLY: 6,
+  ANNUALLY: 12,
 }
 
 /**
- * The next unpaid occurrence after `todayIso`. Used by "Mark paid": a bill
- * three weeks overdue is advanced cycle by cycle until it lands in the future,
- * rather than one cycle only.
+ * The first occurrence on or after `fromIso`, counting from `startDate`.
+ *
+ * Occurrences are always computed from the original start date, so month-end
+ * clamping does not drift: starting 31 Jan gives 28 Feb, then 31 Mar.
  */
-export function advanceDueDate(
-  dueIso: string,
+export function nextOccurrenceOnOrAfter(
+  startDate: string,
   frequency: Frequency,
-  todayIso = localDateIso(),
+  fromIso: string,
 ): string {
-  let next = dueIso
-  for (let step = 0; step < 2000; step += 1) {
-    next = addFrequency(next, frequency)
-    if (daysBetweenIso(todayIso, next) > 0) return next
+  if (!isIsoDate(startDate) || !isIsoDate(fromIso)) return startDate
+  if (startDate >= fromIso) return startDate
+
+  if (frequency === 'WEEKLY' || frequency === 'FORTNIGHTLY') {
+    const step = frequency === 'WEEKLY' ? 7 : 14
+    const days = daysBetweenIso(startDate, fromIso)
+    const steps = Math.max(1, Math.ceil(days / step))
+    return addDaysIso(startDate, steps * step)
   }
-  return next
+
+  const step = MONTH_STEP[frequency]
+  const start = isoDateParts(startDate)
+  const from = isoDateParts(fromIso)
+  if (!start || !from) return startDate
+  let index = Math.max(
+    0,
+    Math.floor(((from.year - start.year) * 12 + (from.month - start.month)) / step),
+  )
+  let occurrence = addMonthsIso(startDate, index * step)
+  while (occurrence < fromIso) {
+    index += 1
+    occurrence = addMonthsIso(startDate, index * step)
+  }
+  return occurrence
+}
+
+/** The occurrence after the given one, e.g. next week's occurrence. */
+export function nextOccurrenceAfter(
+  startDate: string,
+  frequency: Frequency,
+  afterIso: string,
+): string {
+  return nextOccurrenceOnOrAfter(startDate, frequency, addDaysIso(afterIso, 1))
 }
 
 /** Weeks of saving before the bill lands; past-due counts as zero weeks, like the sheet. */
@@ -349,12 +369,14 @@ export function annualCostCents(amountCents: number, frequency: Frequency): numb
 
 export function deriveRow(row: PlanRow, todayIso: string): DerivedRow {
   const weeklyCents = weeklySetAsideCents(row.amountCents, row.frequency)
-  const weeks = weeksUntilDue(row.nextDueDate, todayIso)
+  const nextDueDate = nextOccurrenceOnOrAfter(row.startDate, row.frequency, todayIso)
+  const weeks = weeksUntilDue(nextDueDate, todayIso)
   return {
     ...row,
     weeklyCents,
+    nextDueDate,
     weeksUntilDue: weeks,
-    daysUntilDue: daysBetweenIso(todayIso, row.nextDueDate),
+    daysUntilDue: daysBetweenIso(todayIso, nextDueDate),
     // Match ROUND(amount − setAside × weeks, 2) in the sheet. The unrounded
     // weekly figure is used here, exactly as the sheet's formula does.
     catchUpCents: Math.max(0, Math.round(row.amountCents - weeklyCents * weeks)),
@@ -446,7 +468,7 @@ export function normalizeFrequency(input: string): Frequency | null {
 // CSV / Google Sheets import and export
 // ---------------------------------------------------------------------------
 
-type Column = 'name' | 'amount' | 'frequency' | 'due'
+type Column = 'name' | 'amount' | 'frequency' | 'start'
 
 function splitDelimited(text: string, delimiter: string): string[][] {
   const rows: string[][] = []
@@ -522,8 +544,11 @@ function headerColumns(cells: string[]): Partial<Record<Column, number>> | null 
       /\b(frequency|freq|cycle|period)\b/.test(text)
     ) {
       map.frequency = index
-    } else if (map.due === undefined && /\b(due|date)\b/.test(text)) {
-      map.due = index
+    } else if (
+      map.start === undefined &&
+      /\b(start|begin|commence|first|due|date)\b/.test(text)
+    ) {
+      map.start = index
     }
   })
   // Require two known columns before calling the row a header, so one stray
@@ -535,7 +560,8 @@ function headerColumns(cells: string[]): Partial<Record<Column, number>> | null 
  * Parse pasted Google Sheets rows (tab-separated) or a CSV file. Extra columns
  * such as the weekly/catch-up formulas are ignored. A header is looked for in
  * the first ten rows (a sheet may put headline figures above the table) and is
- * recognised by naming at least two of the four columns.
+ * recognised by naming at least two of the four columns. "Next Due Date" from
+ * older sheets is accepted as a legacy alias for the start date.
  */
 export function parsePlanImport(text: string): PlanImportResult {
   const clean = text.replace(/^\uFEFF/, '').trim()
@@ -556,7 +582,7 @@ export function parsePlanImport(text: string): PlanImportResult {
       header.name === undefined ||
       header.amount === undefined ||
       header.frequency === undefined ||
-      header.due === undefined
+      header.start === undefined
     ) {
       // A row that names a column but not all four is almost certainly a
       // header with a renamed/missing column, not a bill.
@@ -567,20 +593,20 @@ export function parsePlanImport(text: string): PlanImportResult {
             {
               line: 1,
               message:
-                'The header row needs expense name, billed amount, frequency and next due date columns.',
+                'The header row needs expense name, billed amount, frequency and start date columns.',
             },
           ],
           hasHeader: false,
         }
       }
-      columns = { name: 0, amount: 1, frequency: 2, due: 3 }
+      columns = { name: 0, amount: 1, frequency: 2, start: 3 }
     } else {
       columns = header as Record<Column, number>
       hasHeader = true
       start = 1
     }
   } else {
-    columns = { name: 0, amount: 1, frequency: 2, due: 3 }
+    columns = { name: 0, amount: 1, frequency: 2, start: 3 }
   }
 
   // A sheet may have headline rows above the table (as this one does). Look a
@@ -596,7 +622,7 @@ export function parsePlanImport(text: string): PlanImportResult {
         map.name !== undefined &&
         map.amount !== undefined &&
         map.frequency !== undefined &&
-        map.due !== undefined
+        map.start !== undefined
       ) {
         columns = map as Record<Column, number>
         hasHeader = true
@@ -614,7 +640,7 @@ export function parsePlanImport(text: string): PlanImportResult {
           {
             line: partial.line,
             message:
-              'The header row needs expense name, billed amount, frequency and next due date columns.',
+              'The header row needs expense name, billed amount, frequency and start date columns.',
           },
         ],
         hasHeader: false,
@@ -632,10 +658,10 @@ export function parsePlanImport(text: string): PlanImportResult {
     const name = (cells[columns.name] ?? '').trim()
     const amountText = (cells[columns.amount] ?? '').trim()
     const frequencyText = (cells[columns.frequency] ?? '').trim()
-    const dueText = (cells[columns.due] ?? '').trim()
+    const startText = (cells[columns.start] ?? '').trim()
 
     // Sheets often leaves empty formatted rows at the bottom; those are not errors.
-    if (!name && !amountText && !frequencyText && !dueText) continue
+    if (!name && !amountText && !frequencyText && !startText) continue
     if (!name) {
       issues.push({ line, message: 'missing expense name' })
       continue
@@ -665,13 +691,13 @@ export function parsePlanImport(text: string): PlanImportResult {
       issues.push({ line, message: `"${name}" has an unknown frequency (${frequencyText})` })
       continue
     }
-    if (!dueText) {
-      issues.push({ line, message: `"${name}" has no next due date` })
+    if (!startText) {
+      issues.push({ line, message: `"${name}" has no start date` })
       continue
     }
-    const nextDueDate = parseDateInput(dueText)
-    if (!nextDueDate) {
-      issues.push({ line, message: `"${name}" has an invalid date (${dueText})` })
+    const startDate = parseDateInput(startText)
+    if (!startDate) {
+      issues.push({ line, message: `"${name}" has an invalid date (${startText})` })
       continue
     }
 
@@ -679,7 +705,7 @@ export function parsePlanImport(text: string): PlanImportResult {
       full = true
       break
     }
-    rows.push({ name, amountCents, frequency, nextDueDate })
+    rows.push({ name, amountCents, frequency, startDate })
   }
 
   if (full) {
@@ -697,18 +723,16 @@ function csvField(value: string): string {
 }
 
 /**
- * Export in the same shape as the sheet, computed columns included, so the
- * plan can go back into Google Sheets (or be kept as a backup) unchanged.
+ * Export the recurring expenses so they can go back into Google Sheets or be
+ * kept as a backup. The derived weekly set-aside is included for reference.
  */
 export function planToCsv(rows: DerivedRow[]): string {
   const header = [
     'Expense Name',
     'Billed Amount ($)',
     'Frequency',
-    'Next Due Date',
-    'Weeks Until Due',
+    'Start Date',
     'Weekly Set-Aside ($)',
-    'One-Off Catch-Up Needed ($)',
   ]
   const lines = [header.map(csvField).join(',')]
   for (const row of rows) {
@@ -718,10 +742,8 @@ export function planToCsv(rows: DerivedRow[]): string {
         csvCell(row.name),
         (row.amountCents / 100).toFixed(2),
         FREQUENCY_SPECS[row.frequency].label,
-        row.nextDueDate,
-        String(row.weeksUntilDue),
+        row.startDate,
         (row.weeklyCents / 100).toFixed(2),
-        (row.catchUpCents / 100).toFixed(2),
       ]
         .map(csvField)
         .join(','),

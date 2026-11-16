@@ -1,18 +1,17 @@
-// Checks for src/week.ts and src/weekStore.ts: Wed–Tue week maths, the
-// plan-seeded entries, attachment summaries and stored-week validation.
+// Checks for src/week.ts and src/paidStore.ts: Wed–Tue ranges, occurrence
+// generation from a start date, the due/paid summary and paid-record validation.
+import type { PlanRow } from '../src/budget'
 import {
-  deriveWeekEntries,
   endOfWeek,
   formatWeekRange,
+  nextDateAfterOccurrence,
+  occurrenceInWeek,
   startOfWeek,
   summariseWeek,
   weekDayCells,
   weekRelativeLabel,
-  type WeekEntry,
-  type WeekTransaction,
 } from '../src/week'
-import { sanitizeWeekStore } from '../src/weekStore'
-import type { PlanRow } from '../src/budget'
+import { paidKey, sanitizePaidFile, type PaidMap } from '../src/paidStore'
 
 let ok = true
 function check(label: string, condition: boolean) {
@@ -48,150 +47,134 @@ equal('next relative label', weekRelativeLabel('2026-11-11', '2026-11-05'), 'Nex
 equal('last relative label', weekRelativeLabel('2026-10-28', '2026-11-05'), 'Last week')
 
 // ---------------------------------------------------------------------------
-// Plan → week entries
+// Occurrences from a start date
 // ---------------------------------------------------------------------------
-const PLAN: PlanRow[] = [
-  { id: 'r1', name: 'Rent', amountCents: 40000, frequency: 'WEEKLY', nextDueDate: '2026-11-19' },
-  {
-    id: 'r2',
-    name: 'Internet',
-    amountCents: 7500,
-    frequency: 'MONTHLY',
-    nextDueDate: '2026-11-27',
-  },
-  {
-    id: 'r3',
-    name: 'Software',
-    amountCents: 12000,
-    frequency: 'ANNUALLY',
-    nextDueDate: '2027-06-21',
-  },
+function expense(
+  id: string,
+  name: string,
+  amountCents: number,
+  frequency: PlanRow['frequency'],
+  startDate: string,
+): PlanRow {
+  return { id, name, amountCents, frequency, startDate }
+}
+
+const weekly = expense('e1', 'Rent', 40000, 'WEEKLY', '2026-11-05')
+equal('weekly fits its start week', occurrenceInWeek(weekly, '2026-11-04', '2026-11-10'), '2026-11-05')
+equal('weekly moves to the next week', occurrenceInWeek(weekly, '2026-11-11', '2026-11-17'), '2026-11-12')
+equal('weekly is absent before it starts', occurrenceInWeek(weekly, '2026-10-28', '2026-11-03'), null)
+equal('next weekly occurrence', nextDateAfterOccurrence(weekly, '2026-11-05'), '2026-11-12')
+
+const laterWeekly = expense('e2', 'Fuel', 12000, 'WEEKLY', '2026-11-19')
+equal('future weekly appears in its week', occurrenceInWeek(laterWeekly, '2026-11-18', '2026-11-24'), '2026-11-19')
+equal('future weekly absent earlier', occurrenceInWeek(laterWeekly, '2026-11-11', '2026-11-17'), null)
+
+const fortnightly = expense('e3', 'Cleaner', 9000, 'FORTNIGHTLY', '2026-11-04')
+equal('fortnightly first occurrence', occurrenceInWeek(fortnightly, '2026-11-04', '2026-11-10'), '2026-11-04')
+equal('fortnightly skips a week', occurrenceInWeek(fortnightly, '2026-11-11', '2026-11-17'), null)
+equal('fortnightly returns', occurrenceInWeek(fortnightly, '2026-11-18', '2026-11-24'), '2026-11-18')
+
+const monthly = expense('e4', 'Internet', 7500, 'MONTHLY', '2026-01-31')
+equal('monthly clamps in February', occurrenceInWeek(monthly, '2026-02-25', '2026-03-03'), '2026-02-28')
+equal('monthly returns to the 31st', occurrenceInWeek(monthly, '2026-03-25', '2026-03-31'), '2026-03-31')
+equal('monthly next date', nextDateAfterOccurrence(monthly, '2026-02-28'), '2026-03-31')
+
+const quarterly = expense('e5', 'Registration', 85000, 'QUARTERLY', '2026-11-30')
+equal('quarterly first occurrence', occurrenceInWeek(quarterly, '2026-11-25', '2026-12-01'), '2026-11-30')
+equal('quarterly not next week', occurrenceInWeek(quarterly, '2026-12-02', '2026-12-08'), null)
+
+const annual = expense('e6', 'Software', 12000, 'ANNUALLY', '2027-06-21')
+equal('annual occurrence week', occurrenceInWeek(annual, '2027-06-16', '2027-06-22'), '2027-06-21')
+equal('annual absent this year', occurrenceInWeek(annual, '2026-11-11', '2026-11-17'), null)
+
+// ---------------------------------------------------------------------------
+// Due / paid summary
+// ---------------------------------------------------------------------------
+const plan: PlanRow[] = [
+  expense('rent', 'Rent', 40000, 'WEEKLY', '2026-11-04'),
+  expense('internet', 'Internet', 7500, 'MONTHLY', '2026-11-05'),
+  expense('gym', 'Gym', 3000, 'MONTHLY', '2026-11-20'),
 ]
+const paid: PaidMap = {
+  [paidKey('internet', '2026-11-05')]: {
+    expenseId: 'internet',
+    date: '2026-11-05',
+    transactionId: 'tx-internet',
+    paidAt: 1_700_000_000_000,
+  },
+}
 
-const derived = deriveWeekEntries(PLAN, '2026-11-04')
-equal('one entry per plan row', derived.length, 3)
-equal('weekly entry keeps the amount', derived[0].budgetCents, 40000)
-equal('monthly entry uses the weekly set-aside', derived[1].budgetCents, 1731)
-equal('annual entry uses the weekly set-aside', derived[2].budgetCents, 231)
-equal('derived id is stable', derived[0].id, 'week:2026-11-04:plan:r1')
-equal('derived id tracks the week', deriveWeekEntries(PLAN, '2026-11-11')[0].id, 'week:2026-11-11:plan:r1')
-equal('source plan id is kept', derived[1].sourcePlanId, 'r2')
+const summary = summariseWeek(plan, paid, '2026-11-04', '2026-11-10')
+equal('two occurrences this week', summary.occurrences.length, 2)
+equal('one due', summary.due.length, 1)
+equal('one paid', summary.paid.length, 1)
+equal('due total', summary.dueCents, 40000)
+equal('paid total', summary.paidCents, 7500)
+equal('weekly set-aside reference', summary.weeklySetAsideCents, 42423)
+equal('due occurrence is Rent', summary.due[0]?.expense.id, 'rent')
+equal('paid occurrence keeps its transaction', summary.paid[0]?.transactionId, 'tx-internet')
+equal('gym is not in this week', summary.occurrences.some((o) => o.expense.id === 'gym'), false)
+
+const unpaid = summariseWeek(plan, {}, '2026-11-04', '2026-11-10')
+equal('no paid means both due', unpaid.due.length, 2)
+equal('no paid total', unpaid.paidCents, 0)
+equal('all due total', unpaid.dueCents, 47500)
+
+const nextWeek = summariseWeek(plan, paid, '2026-11-11', '2026-11-17')
+equal('weekly rent appears again next week', nextWeek.occurrences.some((o) => o.expense.id === 'rent'), true)
+equal('next week rent is unpaid', nextWeek.due.some((o) => o.expense.id === 'rent'), true)
+equal('internet is not due next week', nextWeek.occurrences.some((o) => o.expense.id === 'internet'), false)
 
 // ---------------------------------------------------------------------------
-// Attachments and totals
+// Paid record validation
 // ---------------------------------------------------------------------------
-const entries: WeekEntry[] = [
-  { id: 'g', name: 'Groceries', budgetCents: 10000 },
-  { id: 'rent', name: 'Rent', budgetCents: 40000 },
-]
-const links = { t1: 'g', t2: 'g', t3: 'missing' }
-const transactions: WeekTransaction[] = [
-  {
-    id: 't1',
-    description: 'Coffee',
-    createdAt: '2026-11-05T08:00:00Z',
-    amountCents: 550,
-    accountName: 'Spending',
-    status: 'SETTLED',
-  },
-  {
-    id: 't2',
-    description: 'Weekly shop',
-    createdAt: '2026-11-04T09:00:00Z',
-    amountCents: 4210,
-    accountName: 'Spending',
-    status: 'SETTLED',
-  },
-  {
-    id: 't3',
-    description: 'Pending coffee',
-    createdAt: '2026-11-06T09:00:00Z',
-    amountCents: 600,
-    accountName: 'Spending',
-    status: 'HELD',
-  },
-  {
-    id: 't4',
-    description: 'Fuel',
-    createdAt: '2026-11-03T09:00:00Z',
-    amountCents: 1000,
-    accountName: 'Spending',
-    status: 'SETTLED',
-  },
-]
-
-const summary = summariseWeek(entries, links, transactions)
-equal('planned total', summary.plannedCents, 50000)
-equal('spent total', summary.spentCents, 6360)
-equal('left total', summary.leftCents, 43640)
-equal('unassigned count', summary.unassignedCount, 2)
-equal('unassigned total', summary.unassignedCents, 1600)
-equal('transaction count', summary.transactionCount, 4)
-equal('groceries attached count', summary.entries[0].attached.length, 2)
-equal('groceries spent', summary.entries[0].spentCents, 4760)
-equal('groceries remaining', summary.entries[0].remainingCents, 5240)
-equal('groceries linked count', summary.entries[0].linkedCount, 2)
-equal('rent spent', summary.entries[1].spentCents, 0)
-equal('rent remains', summary.entries[1].remainingCents, 40000)
-equal('missing-entry links are unassigned', summary.unassignedCount, 2)
-
-const unknown = summariseWeek(entries, links, null)
-equal('unknown spend is null', unknown.spentCents, null)
-equal('unknown left is null', unknown.leftCents, null)
-equal('unknown entry spend is null', unknown.entries[0].spentCents, null)
-equal('links still count without details', unknown.entries[0].linkedCount, 2)
-
-check(
-  'overspend gives a negative remaining',
-  summariseWeek(
-    [{ id: 'x', name: 'Tiny', budgetCents: 100 }],
-    { t1: 'x' },
-    [transactions[0]],
-  ).entries[0].remainingCents === -450,
-)
-
-// ---------------------------------------------------------------------------
-// Stored week validation
-// ---------------------------------------------------------------------------
-const stored = sanitizeWeekStore({
+const file = sanitizePaidFile({
   version: 1,
-  weeks: {
-    '2026-11-04': {
-      entries: [
-        {
-          id: 'week:2026-11-04:plan:r1',
-          name: ' Rent ',
-          budgetCents: 40000,
-          sourcePlanId: 'r1',
-        },
-        { id: 'g', name: 'Groceries', budgetCents: 10000 },
-        { id: 'bad-name', name: '', budgetCents: 1 },
-        { id: 'bad-budget', name: 'x', budgetCents: -1 },
-        { id: 'bad-budget-fraction', name: 'x', budgetCents: 1.5 },
-      ],
-      links: { t1: 'g', t2: 'missing', '': 'g' },
-      updatedAt: 123,
+  paid: {
+    'rent:2026-11-04': {
+      expenseId: 'rent',
+      date: '2026-11-04',
+      transactionId: 'tx-rent',
+      paidAt: 1000,
     },
-    'not-a-date': {
-      entries: [],
-      links: {},
-      updatedAt: 0,
+    'internet:2026-11-05': {
+      expenseId: 'internet',
+      date: '2026-11-05',
+      transactionId: 'tx-internet',
+      paidAt: 2000,
+    },
+    'bad-date': {
+      expenseId: 'bad',
+      date: '2026-02-31',
+      transactionId: 'tx-bad',
+      paidAt: 3000,
+    },
+    'missing:2026-11-05': {
+      expenseId: 'missing',
+      date: '2026-11-05',
+      transactionId: 'bad tx',
+      paidAt: 4000,
+    },
+    'mismatch:2026-11-05': {
+      expenseId: 'other',
+      date: '2026-11-05',
+      transactionId: 'tx-mismatch',
+      paidAt: 5000,
+    },
+    'zero-time:2026-11-05': {
+      expenseId: 'zero',
+      date: '2026-11-05',
+      transactionId: 'tx-zero',
+      paidAt: 0,
     },
   },
 })
-check('valid store survives', stored !== null)
-equal('valid weeks kept only', Object.keys(stored ?? {}).length, 1)
-equal('valid entries kept only', stored?.['2026-11-04'].entries.length, 2)
-equal('entry name is trimmed', stored?.['2026-11-04'].entries[0].name, 'Rent')
-check(
-  'derived id with colons is accepted',
-  stored?.['2026-11-04'].entries[0].id === 'week:2026-11-04:plan:r1',
-)
-equal('links to missing entries are dropped', Object.keys(stored?.['2026-11-04'].links ?? {}).length, 1)
-check('link to the surviving entry is kept', stored?.['2026-11-04'].links.t1 === 'g')
-check('wrong version is rejected', sanitizeWeekStore({ version: 2, weeks: {} }) === null)
-check('non-object is rejected', sanitizeWeekStore('nope') === null)
-check('missing weeks is rejected', sanitizeWeekStore({ version: 1 }) === null)
+check('valid paid file survives', file !== null)
+equal('valid paid rows kept', Object.keys(file ?? {}).length, 2)
+check('paid transaction id is kept', file?.['rent:2026-11-04'].transactionId === 'tx-rent')
+check('wrong paid version is rejected', sanitizePaidFile({ version: 2, paid: {} }) === null)
+check('non-object paid file is rejected', sanitizePaidFile('nope') === null)
+check('paid key format', paidKey('rent', '2026-11-04') === 'rent:2026-11-04')
 
 console.log('\nRESULT:', ok ? 'ALL PASS' : 'FAILURES')
 if (!ok) process.exit(1)

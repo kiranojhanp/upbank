@@ -89,9 +89,15 @@ export function sanitizePlan(value: unknown): PlanRow[] | null {
     }
 
     if (!isFrequency(entry.frequency)) continue
-    const nextDueDate =
-      typeof entry.nextDueDate === 'string' ? entry.nextDueDate.trim() : ''
-    if (!isIsoDate(nextDueDate)) continue
+    // `nextDueDate` is the pre-start-date schema. Reading it keeps an existing
+    // plan usable; it becomes the first occurrence and the next write migrates it.
+    const startDate =
+      typeof entry.startDate === 'string'
+        ? entry.startDate.trim()
+        : typeof entry.nextDueDate === 'string'
+          ? entry.nextDueDate.trim()
+          : ''
+    if (!isIsoDate(startDate)) continue
 
     seen.add(id)
     rows.push({
@@ -99,7 +105,7 @@ export function sanitizePlan(value: unknown): PlanRow[] | null {
       name: rawName,
       amountCents,
       frequency: entry.frequency,
-      nextDueDate,
+      startDate,
     })
   }
 

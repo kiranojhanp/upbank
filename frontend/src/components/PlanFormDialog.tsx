@@ -2,12 +2,12 @@ import { useMemo, useState, type FormEvent } from 'react'
 import {
   FREQUENCY_OPTIONS,
   MAX_EXPENSE_NAME_LENGTH,
-  deriveRow,
+  formatCalendarDate,
   formatCents,
-  formatDueLabel,
   formatMoney,
   isIsoDate,
   parseAmountToCents,
+  weeklySetAsideCents,
   type Frequency,
   type PlanDraftRow,
   type PlanRow,
@@ -17,7 +17,6 @@ import { PlanModal } from './PlanModal'
 interface PlanFormDialogProps {
   open: boolean
   row: PlanRow | null
-  today: string
   onClose: () => void
   onSave: (draft: PlanDraftRow, id?: string) => void
   onDelete: (id: string) => void
@@ -26,7 +25,7 @@ interface PlanFormDialogProps {
 interface FieldErrors {
   name?: string
   amount?: string
-  due?: string
+  start?: string
 }
 
 const FORM_ID = 'plan-expense-form'
@@ -34,7 +33,6 @@ const FORM_ID = 'plan-expense-form'
 export function PlanFormDialog({
   open,
   row,
-  today,
   onClose,
   onSave,
   onDelete,
@@ -44,25 +42,15 @@ export function PlanFormDialog({
   const [name, setName] = useState(row?.name ?? '')
   const [amount, setAmount] = useState(row ? formatCents(row.amountCents) : '')
   const [frequency, setFrequency] = useState<Frequency>(row?.frequency ?? 'WEEKLY')
-  const [due, setDue] = useState(row?.nextDueDate ?? '')
+  const [startDate, setStartDate] = useState(row?.startDate ?? '')
   const [errors, setErrors] = useState<FieldErrors>({})
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const preview = useMemo(() => {
-    if (!isIsoDate(due)) return null
     const cents = parseAmountToCents(amount)
     if (cents === null || cents <= 0) return null
-    return deriveRow(
-      {
-        id: 'preview',
-        name: name.trim() || 'This expense',
-        amountCents: cents,
-        frequency,
-        nextDueDate: due,
-      },
-      today,
-    )
-  }, [amount, due, frequency, name, today])
+    return Math.round(weeklySetAsideCents(cents, frequency))
+  }, [amount, frequency])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -71,7 +59,7 @@ export function PlanFormDialog({
     if (!trimmed) next.name = 'Give the expense a name.'
     const cents = parseAmountToCents(amount)
     if (cents === null || cents <= 0) next.amount = 'Enter an amount above $0.'
-    if (!isIsoDate(due)) next.due = 'Choose the next due date.'
+    if (!isIsoDate(startDate)) next.start = 'Choose the first occurrence.'
     setErrors(next)
     if (Object.keys(next).length > 0) return
     onSave(
@@ -79,7 +67,7 @@ export function PlanFormDialog({
         name: trimmed,
         amountCents: cents as number,
         frequency,
-        nextDueDate: due,
+        startDate,
       },
       row?.id,
     )
@@ -94,8 +82,8 @@ export function PlanFormDialog({
       title={row ? 'Edit expense' : 'Add an expense'}
       description={
         row
-          ? 'Change the bill, or mark it paid from the plan table to roll the due date forward.'
-          : 'Add a recurring or one-off bill. The weekly set-aside and catch-up are calculated as you type.'
+          ? 'Change the recurring expense. Occurrences are generated from the start date.'
+          : 'Add a recurring expense. The start date is the first occurrence; later ones follow the frequency.'
       }
       footer={
         <div className="plan-modal-actions">
@@ -189,30 +177,26 @@ export function PlanFormDialog({
         </div>
 
         <label className="plan-field">
-          <span className="plan-field-label">Next due date</span>
+          <span className="plan-field-label">Start date</span>
           <input
             className="plan-input"
             type="date"
-            value={due}
-            onChange={(event) => setDue(event.target.value)}
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
             required
           />
-          {errors.due && <span className="plan-field-error">{errors.due}</span>}
+          {errors.start && <span className="plan-field-error">{errors.start}</span>}
         </label>
 
-        {preview && (
+        {preview !== null && (
           <div className="plan-preview" aria-live="polite">
             <div className="plan-preview-item">
               <span>Weekly set-aside</span>
-              <strong>{formatMoney(Math.round(preview.weeklyCents))}</strong>
-            </div>
-            <div className="plan-preview-item">
-              <span>One-off catch-up today</span>
-              <strong>{formatMoney(preview.catchUpCents)}</strong>
+              <strong>{formatMoney(preview)}</strong>
             </div>
             <p className="plan-preview-note">
-              {preview.weeksUntilDue} {preview.weeksUntilDue === 1 ? 'week' : 'weeks'} of saving
-              before this bill · {formatDueLabel(due, today)}
+              The first occurrence is {isIsoDate(startDate) ? formatCalendarDate(startDate) : 'the start date'};
+              later occurrences follow the frequency.
             </p>
           </div>
         )}
