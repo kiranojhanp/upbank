@@ -1,0 +1,75 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Determine GitHub Pages base path
+        id: base
+        shell: bash
+        run: |
+          base="${{ vars.VITE_BASE_PATH }}"
+          if [[ -z "$base" ]]; then
+            repo="${{ github.event.repository.name }}"
+            if [[ "$repo" == *.github.io ]]; then
+              base="/"
+            else
+              base="/$repo/"
+            fi
+          fi
+          [[ "$base" != /* ]] && base="/$base"
+          [[ "$base" != */ ]] && base="$base/"
+          echo "path=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for GitHub Pages
+        run: npm run build
+        env:
+          VITE_BASE_PATH: ${{ steps.base.outputs.path }}
+
+      - name: Verify Pages artifacts
+        env:
+          BASE_PATH: ${{ steps.base.outputs.path }}
+        run: |
+          test -f dist/404.html
+          test -f dist/.nojekyll
+          grep -q "${BASE_PATH}assets/" dist/index.html
+          grep -q "${BASE_PATH}index.html" dist/sw.js
+
+      - name: Deploy gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./frontend/dist
+          publish_branch: gh-pages
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          commit_message: Deploy ${{ github.sha }}
+          enable_jekyll: false

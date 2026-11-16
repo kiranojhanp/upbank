@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
@@ -8,6 +8,17 @@ import { defineConfig, type Plugin } from 'vite'
 // This is a static SPA: the browser talks to api.up.com.au directly, so there
 // is no dev proxy. Up answers with `Access-Control-Allow-Origin: *`.
 //
+// GitHub Pages project sites live under `/<repo>/`, so the base path is
+// configurable at build time. The deploy workflow sets it automatically.
+function normalizeBasePath(value: string | undefined): string {
+  const raw = (value ?? '/').trim()
+  if (!raw || raw === '/') return '/'
+  const withLeadingSlash = raw.startsWith('/') ? raw : `/${raw}`
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`
+}
+
+const BASE_PATH = normalizeBasePath(process.env.VITE_BASE_PATH)
+
 // With no server to send security headers, a production build injects a
 // Content-Security-Policy meta tag and emits `_headers` / `_redirects` for
 // static hosts that support them. `connect-src` must allow the Up API, and
@@ -107,8 +118,9 @@ function generateSecurityFiles(): Plugin {
 }
 
 /** Service worker source with the precache list baked in at build time. */
-function serviceWorkerSource(buildId: string, precache: string[]): string {
+function serviceWorkerSource(buildId: string, precache: string[], base: string): string {
   return `const CACHE = 'up-shell-${buildId}';
+const BASE = ${JSON.stringify(base)};
 const PRECACHE = ${JSON.stringify(precache)};
 
 // Precache the whole app shell so the installed PWA opens with no network.
@@ -150,8 +162,8 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(CACHE);
         return (
           (await cache.match(request, { ignoreVary: true })) ||
-          (await cache.match('/index.html', { ignoreVary: true })) ||
-          (await cache.match('/', { ignoreVary: true })) ||
+          (await cache.match(BASE + 'index.html', { ignoreVary: true })) ||
+          (await cache.match(BASE, { ignoreVary: true })) ||
           Response.error()
         );
       }
@@ -172,17 +184,36 @@ self.addEventListener('fetch', (event) => {
 `
 }
 
+/**
+ * GitHub Pages serves `404.html` for unknown paths. A copy of the built index
+ * gives deep links the SPA shell, and `.nojekyll` stops Jekyll from filtering
+ * hashed assets.
+ */
+function emitPagesFallback(): Plugin {
+  return {
+    name: 'emit-pages-fallback',
+    apply: 'build',
+    closeBundle() {
+      const dist = fileURLToPath(new URL('./dist', import.meta.url))
+      const index = join(dist, 'index.html')
+      if (!existsSync(index)) return
+      copyFileSync(index, join(dist, '404.html'))
+      writeFileSync(join(dist, '.nojekyll'), '')
+    },
+  }
+}
+
 function generateServiceWorker(): Plugin {
   const publicDir = fileURLToPath(new URL('./public', import.meta.url))
   return {
     name: 'generate-service-worker',
     apply: 'build',
     generateBundle(_options, bundle) {
-      const precache = new Set<string>(['/', '/index.html'])
+      const precache = new Set<string>([BASE_PATH, `${BASE_PATH}index.html`])
 
       for (const fileName of Object.keys(bundle)) {
         if (fileName === 'sw.js' || fileName.endsWith('.map') || fileName.startsWith('_')) continue
-        precache.add(`/${fileName}`)
+        precache.add(`${BASE_PATH}${fileName}`)
       }
 
       // Files copied verbatim from public/ are not part of the bundle.
@@ -190,23 +221,31 @@ function generateServiceWorker(): Plugin {
         for (const entry of readdirSync(dir)) {
           const full = join(dir, entry)
           if (statSync(full).isDirectory()) walk(full, `${prefix}${entry}/`)
-          else precache.add(`/${prefix}${entry}`)
+          else precache.add(`${BASE_PATH}${prefix}${entry}`)
         }
       }
       if (existsSync(publicDir)) walk(publicDir)
 
-      precache.delete('/sw.js')
+      precache.delete(`${BASE_PATH}sw.js`)
       this.emitFile({
         type: 'asset',
         fileName: 'sw.js',
-        source: serviceWorkerSource(Date.now().toString(36), [...precache].sort()),
+        source: serviceWorkerSource(Date.now().toString(36), [...precache].sort(), BASE_PATH),
       })
     },
   }
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), injectCsp(), generateSecurityFiles(), generateServiceWorker()],
+  base: BASE_PATH,
+  plugins: [
+    react(),
+    tailwindcss(),
+    injectCsp(),
+    generateSecurityFiles(),
+    generateServiceWorker(),
+    emitPagesFallback(),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

@@ -312,6 +312,7 @@ try_files $uri /index.html;
 README.md
 .gitignore
 .github/workflows/ci.yml  Lint, typecheck, build, unit tests and Playwright in CI
+.github/workflows/deploy.yml  Build with the Pages base path and publish gh-pages
 frontend/
   index.html             Vite entry point (CSP meta and manifest link)
   vite.config.ts         Tailwind, SQLite assets, CSP/security headers, service worker
@@ -462,9 +463,36 @@ Everything needed is in `frontend/dist/`. Serve it from any static host (GitHub 
 Netlify, Cloudflare Pages, S3, ...). `dist/_headers` and `dist/_redirects` cover the
 security headers and SPA fallback on Netlify/Cloudflare Pages; other hosts need the
 equivalent configuration described under [Headers to set at the host](#headers-to-set-at-the-host).
-The CSP meta tag is already in the built `index.html`, and `sw.js` sits at the root so its
-scope covers the whole app. Serve everything over HTTPS: the app refuses to boot on a
-non-secure origin, and both service workers and OPFS require a secure context.
+The CSP meta tag is already in the built `index.html`. `sw.js` sits at the base root, so
+its scope covers the app under both `/` and `/<repo>/`. Serve everything over HTTPS: the
+app refuses to boot on a non-secure origin, and both service workers and OPFS require a
+secure context.
+
+### GitHub Pages
+
+`.github/workflows/deploy.yml` publishes `frontend/dist` to the `gh-pages` branch with
+[`peaceiris/actions-gh-pages@v4`](https://github.com/peaceiris/actions-gh-pages) on pushes
+to `main` or a manual dispatch. The workflow:
+
+- Derives `VITE_BASE_PATH` from the repository name (`/upbank/` for a project site, `/`
+  for a `<user>.github.io` site).
+- Builds with that base, so HTML, assets, the manifest, the service worker and its
+  precache all use the same prefix.
+- Emits `404.html` (a copy of the SPA shell for deep links) and `.nojekyll`.
+- Pushes the result to `gh-pages`.
+
+Enable Pages once under **Settings → Pages → Build and deployment → Deploy from a branch**
+and choose `gh-pages` / `(root)`. The app then lives at
+`https://<owner>.github.io/<repo>/`.
+
+A custom domain (or a user site) must be served from `/`, not `/<repo>/`. Set a repository
+variable `VITE_BASE_PATH=/` (Settings → Secrets and variables → Actions → Variables); the
+workflow uses it instead of the derived value. To reproduce the Pages build locally:
+
+```bash
+cd frontend
+VITE_BASE_PATH=/upbank/ npm run build
+```
 
 ## Up API endpoints used
 
