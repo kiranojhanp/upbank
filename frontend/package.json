@@ -11,6 +11,7 @@
     "test:db": "node scripts/db-smoke.mjs",
     "test:csv": "vite build --ssr scripts/csv-check.ts --outDir .csv-check --emptyOutDir >/dev/null && node .csv-check/csv-check.js && rm -rf .csv-check",
     "test:security": "vite build --ssr scripts/security-check.ts --outDir .security-check --emptyOutDir >/dev/null && node .security-check/security-check.js && rm -rf .security-check",
+    "test:pagination": "vite build --ssr scripts/pagination-check.ts --outDir .pagination-check --emptyOutDir >/dev/null && node .pagination-check/pagination-check.js && rm -rf .pagination-check",
     "test:persistence": "vite build --ssr scripts/persistence-smoke.ts --outDir .persistence-smoke --emptyOutDir >/dev/null && node .persistence-smoke/persistence-smoke.js && rm -rf .persistence-smoke",
     "test:render": "node scripts/render-smoke.mjs"
   },
@@ -21,6 +22,7 @@
     "@tanstack/query-core": "5.106.0",
     "@tanstack/query-db-collection": "1.5.1",
     "@tanstack/react-db": "1.0.0-rc.1.3",
+    "@tanstack/react-query": "5.106.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.5.2",

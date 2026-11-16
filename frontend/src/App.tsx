@@ -1,4 +1,5 @@
 import { DbProvider, useLiveQuery } from '@tanstack/react-db'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SessionExpiredError, api } from './api'
 import {
@@ -132,9 +133,11 @@ export default function App() {
   }
 
   return (
-    <DbProvider client={boot.client.db}>
-      <Authenticated client={boot.client} onExpired={handleExpired} onSignOut={handleSignOut} />
-    </DbProvider>
+    <QueryClientProvider client={boot.client.queryClient}>
+      <DbProvider client={boot.client.db}>
+        <Authenticated client={boot.client} onExpired={handleExpired} onSignOut={handleSignOut} />
+      </DbProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -212,5 +215,12 @@ function Authenticated({ client, onExpired, onSignOut }: AuthenticatedProps) {
     )
   }
 
-  return <Dashboard uid={client.uid} onSessionExpired={onExpired} onSignOut={onSignOut} />
+  return (
+    <Dashboard
+      uid={client.uid}
+      cacheAvailable={Boolean(client.cache)}
+      onSessionExpired={onExpired}
+      onSignOut={onSignOut}
+    />
+  )
 }

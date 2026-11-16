@@ -191,6 +191,50 @@ export function openLocalCache(uid: string): Promise<LocalCache | null> {
 }
 
 /**
+ * Clear every piece of app data: token, cached metadata, and all OPFS
+ * databases. Used by the render-error boundary for a clean recovery.
+ */
+export async function clearAllLocalData(): Promise<void> {
+  try {
+    const storage = typeof localStorage === 'undefined' ? null : localStorage
+    if (storage) {
+      const doomed: string[] = []
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index)
+        if (key?.startsWith('up:')) doomed.push(key)
+      }
+      for (const key of doomed) storage.removeItem(key)
+    }
+  } catch {
+    // Storage disabled; nothing else to remove there.
+  }
+
+  for (const pending of openCaches.values()) {
+    const cache = await pending.catch(() => null)
+    if (cache) await cache.dispose()
+  }
+  openCaches.clear()
+
+  if (!opfsSupported()) return
+  try {
+    const root = await navigator.storage.getDirectory()
+    const doomed: string[] = []
+    for await (const [name] of root.entries()) {
+      if (name.startsWith(DB_PREFIX)) doomed.push(name)
+    }
+    for (const name of doomed) {
+      try {
+        await root.removeEntry(name)
+      } catch {
+        // Already gone or open elsewhere; reload will retry on next use.
+      }
+    }
+  } catch (error) {
+    console.warn('[local cache] could not clear all stored rows', error)
+  }
+}
+
+/**
  * Delete all locally stored data for one token fingerprint without requiring a
  * live session. Used when a token is rejected, replaced, or signed out, so the
  * rows of an unusable session cannot linger on the device.

@@ -6,6 +6,7 @@ frontend/dist/
 frontend/.csv-check/
 frontend/.persistence-smoke/
 frontend/.security-check/
+frontend/.pagination-check/
 
 # Tooling
 .agents/

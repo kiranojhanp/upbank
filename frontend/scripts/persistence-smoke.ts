@@ -51,11 +51,13 @@ async function main() {
   const client = new DbClient({ persistence: {}, uid: 'user-a' })
   check('no stored envelope -> fetch', shouldFetchOnMount(client, 'accounts'))
 
+  const now = Date.now()
   writeEnvelope('user-a', 'accounts', {
     rows: 0,
     nextPage: null,
     categoryMap: {},
-    syncedAt: 1,
+    syncedAt: now,
+    oldestCreatedAt: null,
   })
   check('empty stored rows -> fetch', shouldFetchOnMount(client, 'accounts'))
 
@@ -63,7 +65,8 @@ async function main() {
     rows: 3,
     nextPage: null,
     categoryMap: {},
-    syncedAt: 2,
+    syncedAt: now,
+    oldestCreatedAt: null,
   })
   check('warm cache -> no fetch', shouldFetchOnMount(client, 'accounts') === false)
 
@@ -84,7 +87,7 @@ async function main() {
   check('invalid JSON rejected', readEnvelope('user-a', 'bad-shape') === null)
   storage.setItem(
     'up:envelope:user-a:mixed',
-    '{"rows":2.9,"nextPage":42,"categoryMap":{"ok":"Groceries","bad":1},"syncedAt":"x"}',
+    `{"rows":2.9,"nextPage":42,"categoryMap":{"ok":"Groceries","bad":1},"syncedAt":${now},"oldestCreatedAt":7}`,
   )
   const mixed = readEnvelope('user-a', 'mixed')
   check(
@@ -93,10 +96,18 @@ async function main() {
       mixed.nextPage === null &&
       mixed.categoryMap.ok === 'Groceries' &&
       !('bad' in mixed.categoryMap) &&
-      mixed.syncedAt === 0,
+      mixed.oldestCreatedAt === null,
   )
 
-  storage.setItem('up:envelope:user-a:proto', '{"rows":1,"categoryMap":{"__proto__":"x"}}')
+  storage.setItem(
+    'up:envelope:user-a:proto',
+    `{"rows":1,"categoryMap":{"__proto__":"x"},"syncedAt":${now}}`,
+  )
+  storage.setItem(
+    'up:envelope:user-a:stale',
+    `{"rows":2,"syncedAt":${Date.now() - 91 * 24 * 60 * 60 * 1000}}`,
+  )
+  check('stale cache expires', readEnvelope('user-a', 'stale') === null)
   const proto = readEnvelope('user-a', 'proto')
   check(
     'category map has null prototype',
@@ -107,7 +118,8 @@ async function main() {
     rows: 1,
     nextPage: null,
     categoryMap: {},
-    syncedAt: 3,
+    syncedAt: now,
+    oldestCreatedAt: null,
   })
   await forgetUserData('user-a')
   check('forget clears envelope', readEnvelope('user-a', 'accounts') === null)

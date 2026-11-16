@@ -196,7 +196,11 @@ const refreshDeadline = Date.now() + 3000
 while (Date.now() < refreshDeadline && accountsCount() === beforeRefresh) {
   await new Promise((resolve) => setTimeout(resolve, 50))
 }
+const pagedRowsKept = text().includes('Older coffee')
+const cacheNoticeShown = text().includes('Offline cache unavailable')
 console.log('manual refresh call :', accountsCount() > beforeRefresh)
+console.log('paged rows kept     :', pagedRowsKept)
+console.log('cache notice shown  :', cacheNoticeShown)
 
 page.dispatchEvent(new Event('offline'))
 await new Promise((resolve) => setTimeout(resolve, 80))
@@ -276,6 +280,8 @@ if (
   !metadataClearedAfter401 ||
   !reloginRendered ||
   !tokenNotInDom ||
+  !pagedRowsKept ||
+  !cacheNoticeShown ||
   !hasCspMeta ||
   !cspAllowsUp ||
   !hasFrameAncestors ||

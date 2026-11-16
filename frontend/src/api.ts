@@ -89,6 +89,18 @@ export const api = {
     return accountTransactions(accountId, filters)
   },
 
+  /**
+   * Fetch the page immediately older than `until`. Used only when a cursor was
+   * restored from cache and may point into a list that has shifted since.
+   */
+  transactionsUntil(
+    accountId: string,
+    filters: TransactionFilters,
+    until: string,
+  ): Promise<TransactionsResponse> {
+    return accountTransactions(accountId, { ...filters, until })
+  },
+
   /** Fetch a page from a `links.next` URL returned by Up. */
   nextTransactions(url: string): Promise<NextTransactionsResponse> {
     return transactionsPage(url)

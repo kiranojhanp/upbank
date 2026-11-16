@@ -17,7 +17,18 @@ export interface StoredEnvelope {
   nextPage: string | null
   categoryMap: Record<string, string>
   syncedAt: number
+  /**
+   * Oldest transaction currently cached. Used to anchor "Load more" after a
+   * restore, when the saved cursor points into a list that may have shifted.
+   */
+  oldestCreatedAt: string | null
 }
+
+/**
+ * Metadata older than this is ignored, so an abandoned device cannot retain
+ * banking data forever just because it was never signed out.
+ */
+export const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 const ENVELOPE_PREFIX = 'up:envelope:'
 const SYNCED_PREFIX = 'up:synced:'
@@ -76,14 +87,17 @@ export function readEnvelope(uid: string, cacheKey: string): StoredEnvelope | nu
     if (typeof value.rows !== 'number' || !Number.isFinite(value.rows) || value.rows < 0) {
       return null
     }
+    const syncedAt =
+      typeof value.syncedAt === 'number' && Number.isFinite(value.syncedAt) ? value.syncedAt : 0
+    // A missing timestamp is not trustworthy; an old one has expired.
+    if (syncedAt <= 0 || Date.now() - syncedAt > CACHE_TTL_MS) return null
     return {
       rows: Math.floor(value.rows),
       nextPage: typeof value.nextPage === 'string' ? value.nextPage : null,
       categoryMap: readCategoryMap(value.categoryMap),
-      syncedAt:
-        typeof value.syncedAt === 'number' && Number.isFinite(value.syncedAt)
-          ? value.syncedAt
-          : 0,
+      syncedAt,
+      oldestCreatedAt:
+        typeof value.oldestCreatedAt === 'string' ? value.oldestCreatedAt : null,
     }
   } catch {
     return null

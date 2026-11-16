@@ -149,9 +149,9 @@ self.addEventListener('fetch', (event) => {
       } catch {
         const cache = await caches.open(CACHE);
         return (
-          (await cache.match(request)) ||
-          (await cache.match('/index.html')) ||
-          (await cache.match('/')) ||
+          (await cache.match(request, { ignoreVary: true })) ||
+          (await cache.match('/index.html', { ignoreVary: true })) ||
+          (await cache.match('/', { ignoreVary: true })) ||
           Response.error()
         );
       }
@@ -162,7 +162,7 @@ self.addEventListener('fetch', (event) => {
   // Hashed assets are immutable, so cache-first with runtime fill-in.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, { ignoreVary: true });
     if (cached) return cached;
     const response = await fetch(request);
     if (response.ok && response.type === 'basic') cache.put(request, response.clone());

@@ -1,17 +1,17 @@
 import {
   DbClient,
   collectionOptions,
+  localOnlyCollectionOptions,
   type CollectionConfig,
   type UtilsRecord,
 } from '@tanstack/react-db'
 import { persistedCollectionOptions } from '@tanstack/browser-db-sqlite-persistence'
 import { QueryCache, QueryClient, type QueryKey } from '@tanstack/query-core'
 import { queryCollectionOptions } from '@tanstack/query-db-collection'
-import { useCallback, useSyncExternalStore } from 'react'
 import { api } from './api'
 import { clearStoredData, readEnvelope } from './envelopeStore'
 import { SCHEMA_VERSION, type LocalCache } from './persistence'
-import type { Account, Transaction, TransactionFilters, TransactionsResponse } from './types'
+import type { Account, Transaction, TransactionFilters } from './types'
 
 /**
  * Local-first with a durable, per-user cache.
@@ -145,29 +145,43 @@ export const accountsDescriptor = collectionOptions('accounts', (client) =>
 // ---------------------------------------------------------------------------
 // Transactions (one descriptor per account + filter combination)
 // ---------------------------------------------------------------------------
-function buildTransactionsDescriptor(accountId: string, filters: TransactionFilters, id: string) {
-  return collectionOptions(id, (client) =>
-    withPersistence(
-      client,
-      queryCollectionOptions({
+/**
+ * Rows are loaded by `useTransactionsInfinite` (TanStack Query's infinite
+ * query) and mirrored here for offline rendering. The collection has no sync
+ * of its own: it is a persisted row store, not a paging source.
+ */
+function buildTransactionsDescriptor(id: string) {
+  return collectionOptions(
+    id,
+    (client): CollectionConfig<Transaction, string, never, UtilsRecord> => {
+      const base = {
         id,
-        queryKey: [
-          'transactions',
-          accountId,
-          filters.status ?? '',
-          filters.since ?? '',
-          filters.until ?? '',
-        ],
-        queryClient: client.requireDependency<QueryClient>('queryClient'),
-        enabled: shouldFetchOnMount(client, id),
-        // The query cache keeps the envelope; the collection only holds rows.
-        // Only rows are persisted, so after a restore the envelope (cursor and
-        // category names) is empty until the network query answers.
-        queryFn: () => api.transactions(accountId, filters),
-        select: (data: TransactionsResponse) => data.transactions,
         getKey: (transaction: Transaction) => transaction.id,
-      }),
-    ),
+      }
+      const persistence = client.getDependency<LocalCache['persistence'] | null>(
+        'persistence',
+      )
+
+      // No persistence (unsupported browser, tests): a local-only collection
+      // is still ready immediately and accepts direct writes.
+      if (!persistence) {
+        return localOnlyCollectionOptions<Transaction, string>(
+          base,
+        ) as unknown as CollectionConfig<Transaction, string, never, UtilsRecord>
+      }
+
+      // With persistence, the local-only overload adds a loopback sync and
+      // persists direct writes. `initialRender` hydrates restored rows first.
+      const persisted = persistedCollectionOptions<Transaction, string, never, UtilsRecord>({
+        ...base,
+        persistence,
+        schemaVersion: SCHEMA_VERSION,
+        initialRender: { strategy: 'network-first', networkTimeoutMs: 0 },
+      } as Parameters<
+        typeof persistedCollectionOptions<Transaction, string, never, UtilsRecord>
+      >[0])
+      return persisted as unknown as CollectionConfig<Transaction, string, never, UtilsRecord>
+    },
   )
 }
 
@@ -197,33 +211,9 @@ export function getTransactionsDescriptor(
 
   let descriptor = transactionDescriptors.get(id)
   if (!descriptor) {
-    descriptor = buildTransactionsDescriptor(accountId, filters, id)
+    descriptor = buildTransactionsDescriptor(id)
     transactionDescriptors.set(id, descriptor)
   }
 
   return { id, descriptor, queryKey }
-}
-
-/**
- * Reads the collection envelope ({ transactions, nextPage, categoryMap }) from
- * the query cache, since `select` only projects the rows into the collection.
- * The query key is the same array instance the descriptor was built with.
- */
-export function useTransactionsEnvelope(
-  client: DbClient,
-  key: QueryKey | undefined,
-): TransactionsResponse | undefined {
-  const queryClient = client.requireDependency<QueryClient>('queryClient')
-
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => queryClient.getQueryCache().subscribe(onStoreChange),
-    [queryClient],
-  )
-
-  const getSnapshot = useCallback(() => {
-    if (!key) return undefined
-    return queryClient.getQueryData<TransactionsResponse>(key)
-  }, [queryClient, key])
-
-  return useSyncExternalStore(subscribe, getSnapshot, () => undefined)
 }

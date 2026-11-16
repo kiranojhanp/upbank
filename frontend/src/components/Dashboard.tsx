@@ -1,7 +1,7 @@
 import { useDbClient, useLiveQuery } from '@tanstack/react-db'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { SessionExpiredError, api } from '../api'
-import { accountsDescriptor, getTransactionsDescriptor, useTransactionsEnvelope } from '../db'
+import { accountsDescriptor, getTransactionsDescriptor } from '../db'
 import {
   readEnvelope,
   readLastSynced,
@@ -9,19 +9,25 @@ import {
   writeEnvelope,
   writeLastSynced,
 } from '../envelopeStore'
-import { formatRelativeTime, groupByDate } from '../format'
-import type { Account, Transaction, TransactionFilters } from '../types'
+import { formatRelativeTime } from '../format'
+import type { Account, TransactionFilters } from '../types'
+import { forgetUserData } from '../persistence'
+import type { TransactionsSeed } from '../pagination'
 import { useDocumentVisible, useOnlineStatus } from '../useOnlineStatus'
 import { AccountCard, SidebarBrand } from './AccountCard'
-import { DetailPanel } from './DetailPanel'
 import { Filters } from './Filters'
 import { Toasts, type ToastItem } from './Toasts'
-import { TransactionItem } from './TransactionItem'
+import { TransactionsView, type TransactionsHandle } from './TransactionsView'
 
 interface DashboardProps {
   uid: string
+  cacheAvailable: boolean
   onSessionExpired: () => void
   onSignOut: () => void
+}
+
+function errorDetail(error: unknown): string | undefined {
+  return error instanceof Error ? error.message : undefined
 }
 
 const ACCOUNTS_CACHE_KEY = 'accounts'
@@ -84,20 +90,21 @@ function EyeClosedIcon() {
   )
 }
 
-export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) {
+export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: DashboardProps) {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [draftFilters, setDraftFilters] = useState<TransactionFilters>({})
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
-  const [panelTransactionId, setPanelTransactionId] = useState<string | null>(null)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [isBlurred, setIsBlurred] = useState(false)
   const [revealedAccountId, setRevealedAccountId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [timedOutEntry, setTimedOutEntry] = useState<string | null>(null)
 
   const toastId = useRef(0)
+  const refreshingRef = useRef(false)
+  const transactionsRef = useRef<TransactionsHandle>(null)
   const dbClient = useDbClient()
   const online = useOnlineStatus()
   const visible = useDocumentVisible()
@@ -119,18 +126,24 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
   })
 
   // Mirror the non-row parts of the accounts response so the next cold start
-  // knows a cache exists and when it was last refreshed.
+  // knows a cache exists and when it was last refreshed. Use Query's update
+  // time, not render time: restoring rows offline must not extend the cache's
+  // 90-day lifetime.
   useEffect(() => {
     if (!accounts) return
-    const at = Date.now()
+    const at = accountsCollection.utils.dataUpdatedAt
+    if (!at) return
+    const storedAccounts = readEnvelope(uid, ACCOUNTS_CACHE_KEY)
+    if (storedAccounts && at <= storedAccounts.syncedAt) return
     writeEnvelope(uid, ACCOUNTS_CACHE_KEY, {
       rows: accounts.length,
       nextPage: null,
       categoryMap: {},
       syncedAt: at,
+      oldestCreatedAt: null,
     })
     if (accounts.length > 0) writeLastSynced(uid, at)
-  }, [accounts, uid])
+  }, [accounts, accountsCollection, uid])
 
   const selectedAccount = useMemo(
     () => accounts?.find((account) => account.id === selectedAccountId) ?? null,
@@ -147,11 +160,9 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     [dbClient, transactionsEntry],
   )
 
-  const {
-    data: transactions,
-    status: transactionsStatus,
-    isSyncError: transactionsSyncError,
-  } = useLiveQuery({
+  // The collection is the offline mirror. Read it first so the infinite query
+  // can start from cached rows instead of fetching page 1 on every cold start.
+  const { data: cachedTransactions, status: cacheStatus } = useLiveQuery({
     query: (q) =>
       transactionsCollection
         ? q
@@ -160,52 +171,41 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
         : undefined,
   })
 
-  // Cursor and category names restored from the previous visit. The live
-  // envelope takes precedence once the network answers.
   const stored = useMemo(
     () => (transactionsEntry ? readEnvelope(uid, transactionsEntry.id) : null),
     [uid, transactionsEntry],
   )
 
-  const [pagination, setPagination] = useState<{
-    source: unknown
-    nextPage: string | null
-  }>({ source: undefined, nextPage: null })
+  const seed = useMemo<TransactionsSeed | null>(() => {
+    if (!stored || stored.rows <= 0 || !cachedTransactions?.length) return null
+    return {
+      rows: cachedTransactions,
+      nextPage: stored.nextPage,
+      categoryMap: stored.categoryMap,
+      syncedAt: stored.syncedAt,
+      oldestCreatedAt: stored.oldestCreatedAt,
+    }
+  }, [stored, cachedTransactions])
 
-  const envelope = useTransactionsEnvelope(dbClient, transactionsEntry?.queryKey)
-  const categoryMap = envelope?.categoryMap ?? stored?.categoryMap ?? {}
+  const cacheReady = cacheStatus === 'ready' || cacheStatus === 'error'
+  const expectingCache = Boolean(stored && stored.rows > 0)
+  const cacheTimedOut = Boolean(transactionsEntry && timedOutEntry === transactionsEntry.id)
+  const waitingForSeed = Boolean(transactionsEntry && expectingCache && !seed)
+  const waitingForCache = Boolean(transactionsEntry && (!cacheReady || waitingForSeed))
 
-  // A refetch replaces the collection with page 1, so pagination restarts
-  // whenever the live envelope (or the restored one) changes. Adjusting state
-  // during render is the documented alternative to a setState-in-effect cascade.
-  const envelopeSource = envelope ?? stored ?? null
-  if (pagination.source !== envelopeSource) {
-    setPagination({
-      source: envelopeSource,
-      nextPage: envelope?.nextPage ?? stored?.nextPage ?? null,
-    })
-  }
-
-  const nextPage = pagination.nextPage
-
-  // Persist the envelope after a successful fetch so a reload can render the
-  // cursor and category names without a network round trip.
   useEffect(() => {
-    if (!envelope || !transactionsEntry) return
-    const at = Date.now()
-    writeEnvelope(uid, transactionsEntry.id, {
-      rows: envelope.transactions.length,
-      nextPage: envelope.nextPage,
-      categoryMap: envelope.categoryMap,
-      syncedAt: at,
-    })
-    if (envelope.transactions.length > 0) writeLastSynced(uid, at)
-  }, [envelope, transactionsEntry, uid])
+    if (!transactionsEntry || !waitingForCache) return
+    const id = transactionsEntry.id
+    const timer = window.setTimeout(() => setTimedOutEntry(id), READY_FALLBACK_MS)
+    return () => window.clearTimeout(timer)
+  }, [transactionsEntry, waitingForCache])
 
-  const panelTransaction = useMemo(
-    () => transactions?.find((transaction) => transaction.id === panelTransactionId) ?? null,
-    [transactions, panelTransactionId],
+  const canMountTransactions = Boolean(
+    transactionsEntry &&
+      transactionsCollection &&
+      (seed || cacheTimedOut || (cacheReady && !expectingCache)),
   )
+  const isJoint = selectedAccount?.attributes.ownershipType === 'JOINT'
 
   const addToast = useCallback((label: string, description?: string, amount?: string) => {
     const id = ++toastId.current
@@ -219,55 +219,66 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
 
-  // Pull fresh accounts and the selected account's transactions. Triggered by
-  // reconnect, tab focus, the Refresh button, and a first visit with no cache;
-  // everything else renders from SQLite.
+  // Full refresh: balances plus all loaded transaction pages. Infinite Query's
+  // refetch keeps the page count, so a paged list is refreshed without
+  // collapsing back to page 1.
   const refresh = useCallback(async () => {
+    if (refreshingRef.current) return
+    refreshingRef.current = true
     setRefreshing(true)
     try {
-      await accountsCollection.utils.refetch()
-      if (transactionsCollection) await transactionsCollection.utils.refetch()
+      await accountsCollection.utils.refetch({ throwOnError: true })
+      await transactionsRef.current?.refresh()
       writeLastSynced(uid, Date.now())
     } catch (error) {
-      if (error instanceof SessionExpiredError) onSessionExpired()
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired()
+        return
+      }
+      addToast('Refresh failed', errorDetail(error))
     } finally {
+      refreshingRef.current = false
       setRefreshing(false)
     }
-  }, [accountsCollection, transactionsCollection, uid, onSessionExpired])
+  }, [accountsCollection, uid, onSessionExpired, addToast])
 
-  // Lighter background sync for the poll: balances only, so it does not reset
-  // the transaction list or flip the Refresh button.
-  const refreshAccounts = useCallback(async () => {
-    try {
-      await accountsCollection.utils.refetch()
-      writeLastSynced(uid, Date.now())
-    } catch (error) {
-      if (error instanceof SessionExpiredError) onSessionExpired()
-    }
-  }, [accountsCollection, uid, onSessionExpired])
+  // Lighter sync for polling, focus and reconnect. It deliberately refreshes
+  // balances only, so returning to the tab cannot reset the transaction pages.
+  const refreshAccounts = useCallback(
+    async (notify: boolean) => {
+      try {
+        await accountsCollection.utils.refetch({ throwOnError: true })
+        writeLastSynced(uid, Date.now())
+      } catch (error) {
+        if (error instanceof SessionExpiredError) {
+          onSessionExpired()
+          return
+        }
+        if (notify) addToast('Could not refresh balances', errorDetail(error))
+      }
+    },
+    [accountsCollection, uid, onSessionExpired, addToast],
+  )
 
-  // Coming back online is an explicit sync trigger. Listening to the DOM event
-  // (rather than a state change) keeps the refresh out of the effect body.
+  // Coming back online refreshes balances. Transactions refresh from the
+  // Refresh button or a filter change, never by collapsing the paged list.
   useEffect(() => {
-    const onOnline = () => void refresh()
+    const onOnline = () => void refreshAccounts(true)
     window.addEventListener('online', onOnline)
     return () => window.removeEventListener('online', onOnline)
-  }, [refresh])
+  }, [refreshAccounts])
 
   function handleSelectAccount(account: Account) {
     setSelectedAccountId(account.id)
     setRevealedAccountId(account.id)
-    setPanelTransactionId(null)
     setSidebarOpen(false)
   }
 
   function handleApplyFilters() {
-    setPanelTransactionId(null)
     setAppliedFilters(draftFilters)
   }
 
   function handleClearFilters() {
-    setPanelTransactionId(null)
     setDraftFilters({})
     setAppliedFilters({})
   }
@@ -293,29 +304,9 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
         onSessionExpired()
         return
       }
-      addToast('Export failed', error instanceof Error ? error.message : undefined)
+      addToast('Export failed', errorDetail(error))
     } finally {
       setExporting(false)
-    }
-  }
-
-  async function handleLoadMore() {
-    if (!nextPage || !transactionsCollection || !transactionsEntry || loadingMore || !online) return
-    setLoadingMore(true)
-    try {
-      const data = await api.nextTransactions(nextPage)
-      await transactionsCollection.utils.writeUpsert(data.transactions)
-      setPagination((current) => ({ ...current, nextPage: data.nextPage }))
-      writeEnvelope(uid, transactionsEntry.id, {
-        rows: (transactions?.length ?? 0) + data.transactions.length,
-        nextPage: data.nextPage,
-        categoryMap,
-        syncedAt: Date.now(),
-      })
-    } catch (error) {
-      if (error instanceof SessionExpiredError) onSessionExpired()
-    } finally {
-      setLoadingMore(false)
     }
   }
 
@@ -324,21 +315,30 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     setRevealedAccountId(null)
   }
 
+  async function handleClearCache() {
+    try {
+      await forgetUserData(uid)
+      window.location.reload()
+    } catch (error) {
+      addToast('Could not clear the offline cache', errorDetail(error))
+    }
+  }
+
   // Up has no client-side event stream, so a slow account poll stands in for
-  // the old webhook feed while the tab is visible. Backgrounded tabs make no
-  // requests, and reconnecting to the network already triggers a full refresh.
+  // the old webhook feed while the tab is visible.
   useEffect(() => {
     if (!online || !visible) return
-    const interval = window.setInterval(() => void refreshAccounts(), POLL_INTERVAL_MS)
+    const interval = window.setInterval(() => void refreshAccounts(false), POLL_INTERVAL_MS)
     return () => window.clearInterval(interval)
   }, [online, visible, refreshAccounts])
 
-  // Returning to the tab is the natural moment to pull fresh transactions.
+  // Returning to the tab refreshes balances only; the transaction list keeps
+  // its loaded pages. Use Refresh for a full transaction refetch.
   const wasVisible = useRef(visible)
   useEffect(() => {
-    if (visible && !wasVisible.current) void refresh()
+    if (visible && !wasVisible.current) void refreshAccounts(false)
     wasVisible.current = visible
-  }, [visible, refresh])
+  }, [visible, refreshAccounts])
 
   // A warm cache makes a collection ready without a fetch. If it stays idle
   // (for example the SQLite database was cleared outside the app while this
@@ -356,20 +356,6 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     }, READY_FALLBACK_MS)
     return () => window.clearTimeout(timer)
   }, [accountsStatus, online, accountsCollection])
-
-  useEffect(() => {
-    if (!online || !transactionsCollection) return
-    if (transactionsStatus !== 'loading' && transactionsStatus !== 'idle') return
-    const timer = window.setTimeout(() => {
-      void transactionsCollection.utils.refetch().catch(() => {})
-    }, READY_FALLBACK_MS)
-    return () => window.clearTimeout(timer)
-  }, [transactionsStatus, online, transactionsCollection])
-
-  const groupedTransactions = useMemo(() => groupByDate(transactions ?? []), [transactions])
-  const isJoint = selectedAccount?.attributes.ownershipType === 'JOINT'
-  const showLoading = transactionsStatus === 'loading' || transactionsStatus === 'idle'
-  const showingCached = !online && !showLoading && (transactions?.length ?? 0) > 0
 
   return (
     <>
@@ -407,6 +393,9 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
           </div>
 
           <div className="sidebar-footer">
+            {!cacheAvailable && (
+              <p className="cache-note">Offline cache unavailable — this session only.</p>
+            )}
             <div className="sync-status">
               <span className="sync-time">
                 {online
@@ -425,6 +414,15 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
+            {cacheAvailable && (
+              <button
+                type="button"
+                className="logout-link"
+                onClick={() => void handleClearCache()}
+              >
+                Clear cache
+              </button>
+            )}
             <button type="button" className="logout-link" onClick={onSignOut}>
               Sign out
             </button>
@@ -454,53 +452,23 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
                 exporting={exporting}
               />
 
-              {(transactionsSyncError || showingCached) && (
-                <p className="offline-note">Offline — showing saved transactions.</p>
-              )}
-
-              <div id="transaction-list" className="transaction-list">
-                {showLoading && (transactions?.length ?? 0) === 0 ? (
-                  <p className="loading-text">Loading…</p>
-                ) : groupedTransactions.length === 0 ? (
-                  <p className="loading-text">No transactions found.</p>
-                ) : (
-                  groupedTransactions.map(({ date, items }) => (
-                    <Fragment key={date}>
-                      <div className="transaction-date-header">{date}</div>
-                      {items.map((transaction: Transaction) => (
-                        <TransactionItem
-                          key={transaction.id}
-                          transaction={transaction}
-                          categoryMap={categoryMap}
-                          isJoint={Boolean(isJoint)}
-                          onOpen={(selected) => setPanelTransactionId(selected.id)}
-                        />
-                      ))}
-                    </Fragment>
-                  ))
-                )}
-              </div>
-
-              {nextPage && (
-                <div
-                  id="load-more-container"
-                  style={{
-                    display: 'block',
-                    textAlign: 'center',
-                    marginTop: '1.5rem',
-                    padding: '0.5rem 0 1rem',
-                  }}
-                >
-                  <button
-                    id="load-more-btn"
-                    className="load-more-btn"
-                    onClick={handleLoadMore}
-                    disabled={loadingMore || !online}
-                    title={online ? undefined : 'Unavailable offline'}
-                  >
-                    {loadingMore ? 'Loading…' : online ? 'Load more' : 'Load more (offline)'}
-                  </button>
-                </div>
+              {canMountTransactions && transactionsEntry && transactionsCollection ? (
+                <TransactionsView
+                  key={`${transactionsEntry.id}:${seed ? 'seed' : 'empty'}`}
+                  ref={transactionsRef}
+                  uid={uid}
+                  cacheKey={transactionsEntry.id}
+                  accountId={selectedAccount.id}
+                  filters={appliedFilters}
+                  collection={transactionsCollection}
+                  seed={seed}
+                  online={online}
+                  isJoint={Boolean(isJoint)}
+                  onSessionExpired={onSessionExpired}
+                  onNotify={addToast}
+                />
+              ) : (
+                <p className="loading-text">Loading…</p>
               )}
             </section>
           )}
@@ -524,12 +492,6 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
 
       <Toasts items={toasts} onDismiss={dismissToast} />
 
-      <DetailPanel
-        transaction={panelTransaction}
-        categoryMap={categoryMap}
-        isJoint={Boolean(isJoint)}
-        onClose={() => setPanelTransactionId(null)}
-      />
     </>
   )
 }
