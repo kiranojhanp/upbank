@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test:db": "node scripts/db-smoke.mjs",
+    "test:csv": "vite build --ssr scripts/csv-check.ts --outDir .csv-check --emptyOutDir >/dev/null && node .csv-check/csv-check.js && rm -rf .csv-check",
     "test:persistence": "vite build --ssr scripts/persistence-smoke.ts --outDir .persistence-smoke --emptyOutDir >/dev/null && node .persistence-smoke/persistence-smoke.js && rm -rf .persistence-smoke",
     "test:render": "node scripts/render-smoke.mjs"
   },

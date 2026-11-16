@@ -26,6 +26,10 @@ for (const key of [
 }
 globalThis.self = page
 
+// The app is a static SPA: a stored token boots it, and it calls Up directly.
+// Seed one so the test starts authenticated rather than on the login screen.
+page.localStorage.setItem('up:token', 'pat-test')
+
 const accounts = [
   {
     id: 'acc-1',
@@ -47,9 +51,12 @@ const accounts = [
   },
 ]
 
-const transactions = {
-  transactions: [
+const categories = [{ id: 'cat-1', attributes: { name: 'Eating out' } }]
+
+const txPage1 = {
+  data: [
     {
+      type: 'transactions',
       id: 'tx-1',
       attributes: {
         description: 'Coffee',
@@ -60,13 +67,15 @@ const transactions = {
       relationships: { category: { data: { id: 'cat-1' } } },
     },
   ],
-  nextPage: 'cursor-2',
-  categoryMap: { 'cat-1': 'Eating out' },
+  links: {
+    next: 'https://api.up.com.au/api/v1/accounts/acc-1/transactions?page%5Bafter%5D=cursor-2&page%5Bsize%5D=50',
+  },
 }
 
-const nextPage = {
-  transactions: [
+const txPage2 = {
+  data: [
     {
+      type: 'transactions',
       id: 'tx-2',
       attributes: {
         description: 'Older coffee',
@@ -76,40 +85,26 @@ const nextPage = {
       },
     },
   ],
-  nextPage: null,
+  links: { next: null },
 }
-
-// Simulated server session. The app boots by probing `/api/session`, so the
-// dashboard must come from a valid session rather than automatically.
-let authed = true
-const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60
 
 const requested = []
 globalThis.fetch = async (input) => {
   const url = String(input)
   requested.push(url)
-  const path = new URL(url, 'http://x').pathname
+  const parsed = new URL(url, 'https://api.up.com.au')
+  const path = parsed.pathname
+  const query = parsed.search
 
   let status = 200
   let body
-  if (path === '/api/session') {
-    if (authed) {
-      body = { authenticated: true, uid: 'test-user', expiresAt, verified: true }
-    } else {
-      status = 401
-      body = { error: 'session_expired' }
-    }
-  } else if (path === '/api/login') {
-    authed = true
-    body = { ok: true, uid: 'test-user', expiresAt }
-  } else if (path === '/api/logout') {
-    authed = false
-    body = { ok: true }
-  } else if (url.includes('/api/transactions/next')) body = nextPage
-  else if (url.includes('/api/accounts/') && url.includes('/transactions')) body = transactions
-  else if (url.includes('/api/accounts')) body = { accounts }
-  else if (url.includes('/api/events')) body = { events: [] }
-  else body = { ok: true }
+  if (path === '/api/v1/util/ping') body = { meta: { id: 'ping', statusEmoji: '⚡️' } }
+  else if (path === '/api/v1/accounts') body = { data: accounts, links: { next: null } }
+  else if (path === '/api/v1/categories') body = { data: categories, links: { next: null } }
+  else if (path === '/api/v1/accounts/acc-1') body = { data: accounts[0] }
+  else if (path === '/api/v1/accounts/acc-1/transactions') {
+    body = query.includes('after') ? txPage2 : txPage1
+  } else body = { data: [], links: { next: null } }
 
   return {
     ok: status >= 200 && status < 300,
@@ -159,7 +154,7 @@ while (Date.now() < moreDeadline && !text().includes('Older coffee')) {
 }
 console.log('page 2 appended     :', text().includes('Older coffee'))
 
-const paths = [...new Set(requested.map((u) => new URL(u, 'http://x').pathname))]
+const paths = [...new Set(requested.map((u) => new URL(u, 'https://api.up.com.au').pathname))]
 console.log('api calls           :', paths.join(', '))
 
 const page2Rendered = text().includes('Older coffee')
@@ -170,7 +165,7 @@ const findButton = (label) =>
     (button) => button.textContent?.trim() === label,
   )
 const accountsCount = () =>
-  requested.filter((url) => new URL(url, 'http://x').pathname === '/api/accounts').length
+  requested.filter((url) => new URL(url, 'http://x').pathname === '/api/v1/accounts').length
 
 console.log('synced label shown  :', /Synced/.test(text()))
 
@@ -191,7 +186,7 @@ console.log('offline note shown  :', text().includes('Offline — showing saved 
 page.dispatchEvent(new Event('online'))
 await new Promise((resolve) => setTimeout(resolve, 80))
 
-// Sign out must land on the login screen and call the server-side logout.
+// Sign out is local now (no server session to clear) and must land on login.
 const signOut = Array.from(page.document.querySelectorAll('button')).find(
   (button) => button.textContent?.trim() === 'Sign out',
 )
@@ -203,9 +198,8 @@ while (Date.now() < logoutDeadline && !isLoginScreen()) {
 }
 const loginReached = isLoginScreen()
 console.log('sign out -> login   :', loginReached)
-console.log('logout call made    :', requested.some((u) => u.includes('/api/logout')))
 
-// Re-login must build a new store and refetch from scratch.
+// Re-login must validate the token, store it, build a new store and refetch.
 const tokenInput = page.document.querySelector('input[name="accessToken"]')
 if (tokenInput) {
   // Bypass React's patched value setter so its change tracker sees the edit.
@@ -218,7 +212,9 @@ const reloginDeadline = Date.now() + 3000
 while (Date.now() < reloginDeadline && !text().includes('Spending')) {
   await new Promise((resolve) => setTimeout(resolve, 50))
 }
-const accountsCalls = requested.filter((u) => new URL(u, 'http://x').pathname === '/api/accounts').length
+const accountsCalls = requested.filter(
+  (u) => new URL(u, 'http://x').pathname === '/api/v1/accounts',
+).length
 console.log('re-login renders    :', text().includes('Spending'))
 console.log('accounts refetched  :', accountsCalls >= 2, `(${accountsCalls} calls)`)
 

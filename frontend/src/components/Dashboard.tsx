@@ -10,7 +10,7 @@ import {
   writeLastSynced,
 } from '../envelopeStore'
 import { formatRelativeTime, groupByDate } from '../format'
-import type { Account, EventItem, Transaction, TransactionFilters } from '../types'
+import type { Account, Transaction, TransactionFilters } from '../types'
 import { useDocumentVisible, useOnlineStatus } from '../useOnlineStatus'
 import { AccountCard, SidebarBrand } from './AccountCard'
 import { DetailPanel } from './DetailPanel'
@@ -29,26 +29,20 @@ const ACCOUNTS_CACHE_KEY = 'accounts'
 // warm cache the restore makes it ready immediately; this only covers a cache
 // that was cleared outside the app while its metadata survived.
 const READY_FALLBACK_MS = 1500
+// Without a webhook feed, balances are re-read from Up on a slow timer while
+// the tab is visible. It refreshes accounts only, so it never collapses a
+// transaction list the user has paged through.
+const POLL_INTERVAL_MS = 60_000
 
-const RELOAD_EVENTS = new Set([
-  'TRANSACTION_CREATED',
-  'TRANSACTION_SETTLED',
-  'TRANSACTION_DELETED',
-  'TRANSACTION_CATEGORY_CHANGE',
-  'TRANSACTION_NOTE_CHANGE',
-])
-
-const EVENT_LABELS: Record<string, string> = {
-  TRANSACTION_CREATED: 'New transaction',
-  TRANSACTION_SETTLED: 'Transaction settled',
-  TRANSACTION_DELETED: 'Transaction deleted',
-  TRANSACTION_CATEGORY_CHANGE: 'Category updated',
-  TRANSACTION_NOTE_CHANGE: 'Note updated',
-}
-
-function prettifyEvent(type: string): string {
-  const lower = type.replace(/_/g, ' ').toLowerCase()
-  return lower.charAt(0).toUpperCase() + lower.slice(1)
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function EyeOpenIcon() {
@@ -101,6 +95,7 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const [refreshing, setRefreshing] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const toastId = useRef(0)
   const dbClient = useDbClient()
@@ -224,8 +219,9 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
 
-  // The only automatic network path besides reconnect, a webhook event, and a
-  // first visit with no cache. Everything else renders from SQLite.
+  // Pull fresh accounts and the selected account's transactions. Triggered by
+  // reconnect, tab focus, the Refresh button, and a first visit with no cache;
+  // everything else renders from SQLite.
   const refresh = useCallback(async () => {
     setRefreshing(true)
     try {
@@ -238,6 +234,17 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
       setRefreshing(false)
     }
   }, [accountsCollection, transactionsCollection, uid, onSessionExpired])
+
+  // Lighter background sync for the poll: balances only, so it does not reset
+  // the transaction list or flip the Refresh button.
+  const refreshAccounts = useCallback(async () => {
+    try {
+      await accountsCollection.utils.refetch()
+      writeLastSynced(uid, Date.now())
+    } catch (error) {
+      if (error instanceof SessionExpiredError) onSessionExpired()
+    }
+  }, [accountsCollection, uid, onSessionExpired])
 
   // Coming back online is an explicit sync trigger. Listening to the DOM event
   // (rather than a state change) keeps the refresh out of the effect body.
@@ -263,6 +270,33 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     setPanelTransactionId(null)
     setDraftFilters({})
     setAppliedFilters({})
+  }
+
+  // Export the selected account as CSV. Only the date inputs are sent, so with
+  // no dates chosen the file spans the account's whole history.
+  async function handleExportCsv() {
+    if (!selectedAccount || exporting) return
+    if (!online) {
+      addToast('Export unavailable offline', 'Reconnect to download a CSV')
+      return
+    }
+    setExporting(true)
+    try {
+      const { blob, filename } = await api.exportTransactionsCsv(
+        selectedAccount.id,
+        draftFilters,
+      )
+      downloadBlob(blob, filename)
+      addToast('CSV exported', selectedAccount.attributes.displayName)
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        onSessionExpired()
+        return
+      }
+      addToast('Export failed', error instanceof Error ? error.message : undefined)
+    } finally {
+      setExporting(false)
+    }
   }
 
   async function handleLoadMore() {
@@ -299,29 +333,21 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     setRevealedAccountId(null)
   }
 
-  // Poll only while the tab is visible and online; backgrounded tabs make no
-  // requests, and reconnecting to the network already triggers a refresh.
+  // Up has no client-side event stream, so a slow account poll stands in for
+  // the old webhook feed while the tab is visible. Backgrounded tabs make no
+  // requests, and reconnecting to the network already triggers a full refresh.
   useEffect(() => {
     if (!online || !visible) return
-
-    const interval = window.setInterval(async () => {
-      try {
-        const { events } = await api.events()
-        for (const event of events as EventItem[]) {
-          const label = EVENT_LABELS[event.type] ?? prettifyEvent(event.type)
-          addToast(label, event.description, event.amount)
-
-          if (RELOAD_EVENTS.has(event.type)) {
-            await refresh()
-          }
-        }
-      } catch (error) {
-        if (error instanceof SessionExpiredError) onSessionExpired()
-      }
-    }, 5000)
-
+    const interval = window.setInterval(() => void refreshAccounts(), POLL_INTERVAL_MS)
     return () => window.clearInterval(interval)
-  }, [online, visible, refresh, addToast, onSessionExpired])
+  }, [online, visible, refreshAccounts])
+
+  // Returning to the tab is the natural moment to pull fresh transactions.
+  const wasVisible = useRef(visible)
+  useEffect(() => {
+    if (visible && !wasVisible.current) void refresh()
+    wasVisible.current = visible
+  }, [visible, refresh])
 
   // A warm cache makes a collection ready without a fetch. If it stays idle
   // (for example the SQLite database was cleared outside the app while this
@@ -433,6 +459,8 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
                 onChange={setDraftFilters}
                 onApply={handleApplyFilters}
                 onClear={handleClearFilters}
+                onExport={handleExportCsv}
+                exporting={exporting}
               />
 
               {(transactionsSyncError || showingCached) && (

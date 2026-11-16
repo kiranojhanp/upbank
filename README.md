@@ -1,27 +1,19 @@
-# Unofficial Up — React + FastAPI
+# Unofficial Up — React SPA
 
-A React + FastAPI port of [kiranojhanp/upbank](https://github.com/kiranojhanp/upbank),
-an unofficial web app for viewing Up Banking accounts, balances and transactions, with
-optional real-time updates via Up webhooks.
+An unofficial web app for viewing Up Banking accounts, balances and transactions. It is a
+**static, frontend-only** React single-page app: the browser talks to the Up API directly
+and caches what it fetches on the device. There is no server to run.
 
-The original project is a Node.js/Express app with EJS views. This version uses the stack
-described in [Ekky Armandi's React + FastAPI article](https://ekky.dev/blog/2026-06-12-why-react-fastapi-is-a-perfect-stack-for-an-ai-web-application/):
-FastAPI exposes a typed JSON API and React owns the entire UI. The client data layer is
-[TanStack DB](https://tanstack.com/db) 1.0 RC1, used as a reactive store backed by a
-durable per-user SQLite cache.
+> Not affiliated with Up. Your personal access token can read and categorise your banking
+> data — use at your own risk, ideally with a short-lived token.
 
 ## Stack
 
-- **Backend:** FastAPI + httpx, with server-side sessions in SQLite
-- **Frontend:** React 19 + TypeScript + Vite
-- **Client data:** TanStack DB 1.0 RC1 (`@tanstack/react-db`, `query-db-collection`)
-- **Local cache:** `@tanstack/browser-db-sqlite-persistence` (wa-sqlite in OPFS)
-- **Styling:** the original Up-inspired stylesheet, plus Tailwind CSS v4
-- **Components:** shadcn/ui, generated into `src/components/ui` with the CLI
-- **Deploy:** multi-stage Docker image (Node builds the SPA, Python serves it)
-
-TanStack packages are pinned to exact versions (no `^`). RC releases can change
-collection semantics in a patch, and this app holds financial data.
+- **React 19 + TypeScript + Vite** — the app shell
+- **TanStack DB + TanStack Query** — local-first collections the UI renders from
+- **OPFS SQLite** (`wa-sqlite`) — a durable, per-user cache of those collections
+- **Tailwind CSS v4 + shadcn/ui** — styling and primitives
+- **No backend** — deploy the built `dist/` to any static host
 
 ## Features
 
@@ -29,15 +21,40 @@ collection semantics in a patch, and this app holds financial data.
 - View all account balances (including 2Up joint accounts)
 - Click an account to view transactions grouped by date
 - Filter transactions by status (settled/pending) and date range
+- Export an account's transactions to CSV, limited to the selected date range (or the
+  whole account when no dates are chosen)
 - Paginated transaction loading (50 at a time, with "Load more")
 - Transaction detail panel: category, card method, foreign amounts, round-ups, cashback, sender
-- Real-time transaction updates and toast notifications via Up webhooks
-- Automatic webhook registration on login and deletion on logout
-- Sign in once: the session lasts 30 days and extends on each visit
 - Offline-first: accounts, transactions, categories and the pagination cursor are
   restored from a per-user local cache with no network round trip
-- Background sync on reconnect, on webhook events, or from a Refresh button
-- Balance blur toggle
+- Installable PWA: a service worker precaches the whole app shell, so the installed app
+  opens with no network at all
+- Background sync on reconnect, on returning to the tab, from a Refresh button, and from a
+  slow account poll
+
+## How it works
+
+### Direct to the Up API
+
+The app calls `https://api.up.com.au/api/v1` from the browser with the token in an
+`Authorization: Bearer` header. Up's API is CORS-permissive — it answers with
+`Access-Control-Allow-Origin: *` and allows the `authorization` header on preflight — so
+no proxy is required. There are no cookies; the bearer header is the whole credential,
+which is why requests use `credentials: 'omit'`.
+
+### The token lives in the browser
+
+With no server session, the personal access token is stored in `localStorage`
+(`auth.ts`) and attached to every request. This is a deliberate trade-off: any script on
+the origin could read it, so the app ships a strict CSP and loads no third-party code.
+Generate a short-lived token in the Up app to bound the exposure.
+
+### No real-time webhooks
+
+Up webhooks need a publicly reachable HTTPS endpoint, which a static site cannot provide.
+Instead the app refreshes on `online`, when the tab regains focus, from the Refresh
+button, and via a slow timer while the tab is visible. The timer refreshes balances only,
+so it never collapses a transaction list you have paged through.
 
 ## Data model: local-first with a durable cache
 
@@ -46,19 +63,18 @@ Collections are the source of truth for rendering; components never hold copies 
 
 | Collection | Key | Source |
 | --- | --- | --- |
-| `accounts` | account id | `GET /api/accounts` |
-| `transactions:<account>:<filters>` | transaction id | `GET /api/accounts/{id}/transactions` |
+| `accounts` | account id | Up `GET /accounts` |
+| `transactions:<account>:<filters>` | transaction id | Up `GET /accounts/{id}/transactions` |
 
-- `useLiveQuery` reads collections; webhook events refetch and the UI updates without
-  manual state plumbing.
-- The transactions endpoint returns `{ transactions, nextPage, categoryMap }`. `select`
+- `useLiveQuery` reads collections; a refetch updates the UI without manual state plumbing.
+- The transactions query returns `{ transactions, nextPage, categoryMap }`. `select`
   projects `transactions` into the collection; the envelope stays in the TanStack Query
   cache so pagination metadata and category names are read without a second request.
 - "Load more" appends rows with `utils.writeUpsert`. A refetch replaces the collection
   with page 1, which is why the cursor resets whenever the envelope changes.
 - A new `DbClient` + `QueryClient` is created per signed-in session. Ending the session
-  (sign out or 401) drops the whole store rather than trying to scrub rows from a client
-  that still has query observers attached.
+  (sign out or 401) drops the whole store rather than scrubbing rows from a client that
+  still has query observers attached.
 
 ### The local cache (OPFS SQLite)
 
@@ -68,15 +84,15 @@ and its rows are stored in SQLite (`wa-sqlite`, via
 `initialRender: { strategy: 'network-first', networkTimeoutMs: 0 }` renders restored rows
 immediately.
 
-- **Per user.** The database is named after a non-reversible fingerprint of the Up token
-  (`sha256(token)[:16]`) that the server returns from `GET /api/session`. Two Up accounts
-  on one browser never read each other's rows.
-- **Behind authentication.** Collections are only materialised after `GET /api/session`
-  confirms the session. That probe re-checks the token against Up at most once per
-  `SESSION_VERIFY_HOURS`, and a revoked token deletes the session and lands on the login
-  screen, so cached rows are never shown to a browser that is no longer authorised.
-- **Wiped on sign out.** "Sign out" closes SQLite and deletes the database files. Session
-  expiry keeps the cache, because the next login is still authenticated.
+- **Per user.** The database is named after a non-reversible fingerprint of the token
+  (`sha256(token)[:16]`) computed in the browser (`auth.ts`). Two Up accounts on one
+  browser never read each other's rows.
+- **Behind the boot probe.** Collections are only materialised once the stored token has
+  passed a probe against Up. The probe re-checks the token at most once per 6 hours, so
+  page loads do not always cost an Up request, and a revoked token signs out before cached
+  rows can render.
+- **Wiped on sign out.** "Sign out" closes SQLite and deletes the database files. A 401
+  during a session keeps the cache, because the next login is still authenticated.
 - **Degrades cleanly.** Without OPFS (happy-dom in tests, Safari private mode, old
   browsers) `openLocalCache` returns null and the store is in-memory only.
 
@@ -87,14 +103,15 @@ copy exists (`rows > 0`), `enabled` is `false`, the restored rows render, and th
 syncs only on:
 
 - **reconnect** — the browser's `online` event,
-- **a webhook event** — while the tab is visible,
+- **tab focus** — returning to a hidden tab,
 - **the Refresh button** — in the sidebar footer, next to a "Synced 4m ago" label,
+- **the visible-tab poll** — balances only, every 60 seconds,
 - **a first visit** for that account/filter, when no cache exists.
 
-`/api/events` polling pauses while the tab is hidden or offline, so a backgrounded tab
-makes no requests at all. If a cache's rows are gone but its metadata survived (for
-example the SQLite database was cleared outside the app), a short fallback timer forces a
-fetch instead of hanging on "Loading".
+All of these pause while the tab is hidden or offline, so a backgrounded tab makes no
+requests. If a cache's rows are gone but its metadata survived (for example the SQLite
+database was cleared outside the app), a short fallback timer forces a fetch instead of
+hanging on "Loading".
 
 Non-row response parts are stored in `localStorage` by `envelopeStore.ts`: the pagination
 cursor, the category-name map, the row count used for the decision above, and the
@@ -106,51 +123,91 @@ point at a shifted window, so "Load more" after an offline period may skip or re
 transactions. The button is disabled while offline; use Refresh first if the page boundary
 matters.
 
-### Why local-first is not the security control here
+## Offline app shell (PWA)
 
-Local-first is a latency and resilience architecture. It does not improve authentication,
-authorization, transport or storage security, and for financial data it *adds* exposure:
-any XSS can read an in-memory store, and any at-rest store is readable by whoever has the
-browser profile. So the security properties come from separate controls:
+Durable data (the OPFS cache above) is only half of offline. The other half is the app
+shell, handled by a service worker generated at build time by `vite.config.ts`:
 
-- **The Up token never reaches the browser.** The session cookie carries an opaque random
-  id; the token lives in a server-side SQLite table. A signed cookie would be tamper-proof
-  but readable, which is not good enough for a banking credential.
-- **Strict CSP** — `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`,
-  `worker-src 'self'`, no inline scripts, no third-party origins. Fonts are self-hosted
-  for this reason.
-- **`SameSite=Strict`** cookie plus an explicit `Origin` check on every unsafe method.
-- **`Cache-Control: no-store`** on `/api/*` and the SPA shell.
+- **Precache.** On install the worker fetches and stores the whole shell — `index.html`,
+  the hashed JS/CSS, the `wa-sqlite.wasm` engine, the OPFS worker, fonts, icons and the
+  manifest — so the installed app boots with no network. Per-URL failures are tolerated so
+  one missing asset cannot abort install.
+- **Fetch strategy.** Navigations are network-first with a cached-shell fallback (so a new
+  deploy is picked up, and offline still works). Same-origin assets are cache-first with
+  runtime fill-in. Cross-origin requests — the Up API — are never intercepted.
+- **Manifest.** `public/manifest.webmanifest` plus PNG icons make the app installable to
+  the home screen.
+
+The token is stored in `localStorage`, and the token/cache are removed on sign out; the
+service worker only ever caches the app shell (never Up responses).
+
+When the cache opens, the app also calls `navigator.storage.persist()` so the browser will
+not evict the OPFS data under disk pressure, and it skips attaching the cache if
+`navigator.storage.estimate()` shows the origin is nearly out of room. A `unhandledrejection`
+guard logs (rather than crashes on) a `QuotaExceededError` from the persistence layer's
+background writes.
+
+## Security
+
+Local-first is a latency and resilience architecture, not a security control: any XSS can
+read an in-memory store, and any at-rest store is readable by whoever has the browser
+profile. The security properties come from separate controls:
+
+- **Strict CSP** — injected into `index.html` at build time by `vite.config.ts`:
+  `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `worker-src 'self'`,
+  `connect-src 'self' https://api.up.com.au`, no inline scripts, no third-party origins.
+  Fonts are self-hosted for this reason.
+- **No third-party code** — the app ships its own bundle, fonts and assets.
+- **`referrer: no-referrer`** via a meta tag.
 - **Local rows are scoped to the user and removed on sign out.**
-- **`X-Frame-Options: DENY`**, `nosniff`, `no-referrer`, COOP/CORP, and a restrictive
-  `Permissions-Policy`.
 
 `style-src 'unsafe-inline'` is required because React writes `style` attributes. It cannot
-exfiltrate data because `connect-src` is `'self'`.
+exfiltrate data because `connect-src` is limited to `'self'` and the Up API.
 
 `'wasm-unsafe-eval'` is required to compile the SQLite wasm engine. It permits WebAssembly
 compilation only, not JavaScript `eval`.
 
-`SameSite=Strict` means following an external link into the app shows the login screen
-once. That is the intended trade-off for banking data.
+### Headers to set at the host
+
+A meta tag cannot express everything, so configure these on your static host:
+
+```
+X-Frame-Options: DENY
+Content-Security-Policy: frame-ancestors 'none'
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
+
+# index.html and sw.js must revalidate so deploys land; hashed assets never change.
+Cache-Control: no-cache                                  # /index.html, /sw.js
+Cache-Control: public, max-age=31536000, immutable       # /assets/*
+```
 
 ## Project layout
 
 ```
-main.py                  FastAPI app: API routes, sessions, security middleware, SPA serving
-.sessions.sqlite3        Server-side session store (created at startup, gitignored)
-Procfile                 honcho process definitions for dev
+README.md
+.gitignore
 frontend/
-  index.html             Vite entry point
-  vite.config.ts         Dev proxy → FastAPI on :8000, Tailwind, SQLite asset handling
-  public/fonts/          Self-hosted woff2 fonts (no third-party origin)
+  index.html             Vite entry point (CSP meta and manifest link)
+  vite.config.ts         Tailwind, SQLite asset handling, CSP + service-worker generation
+  components.json        shadcn/ui CLI configuration
+  public/
+    fonts/               Self-hosted woff2 fonts (no third-party origin)
+    manifest.webmanifest Web app manifest
+    favicon.svg          Source icon; icon-192/512.png + apple-touch-icon.png generated from it
+    # dist/sw.js is generated at build time with the precache list baked in
   scripts/
     db-smoke.mjs         Data-layer test against the real TanStack DB packages
+    csv-check.ts         CSV columns, escaping and formula-injection guard
     persistence-smoke.ts Cache fallback when OPFS is unavailable
-    render-smoke.mjs     Renders the production bundle in happy-dom
+    render-smoke.mjs     Renders the production bundle in happy-dom against a fake Up API
   src/
     App.tsx              Boot probe, per-session store, view switching
-    api.ts               Typed fetch client (credentials: include)
+    auth.ts              Token storage, cache fingerprint, verify window
+    api.ts               Facade the UI and collections call
+    up.ts                Direct Up API client (fetch, errors, pagination)
+    csv.ts               Transaction → CSV serialisation for the export
     db.ts                TanStack DB client, descriptors, persistence, fetch gating
     persistence.ts       OPFS SQLite cache: open, dispose, wipe
     envelopeStore.ts     Cursor, category map and last-synced metadata
@@ -169,10 +226,6 @@ frontend/
       Filters.tsx
       Toasts.tsx
       UpLogo.tsx
-components.json          shadcn/ui CLI configuration
-Dockerfile               Multi-stage Node → Python build
-docker-compose.yml
-pyproject.toml
 ```
 
 ## UI components (shadcn/ui)
@@ -191,68 +244,30 @@ Components land in `src/components/ui/` and import through the `@/*` alias
 `separator`, `dialog`) is already installed.
 
 The app's stylesheet was not rewritten. `src/index.css` imports Tailwind's theme and
-utilities but **not Preflight**, because the hand-tuned Up theme already has its own
-reset and Preflight's global `line-height` would shift it. A small `base` layer recreates
-the parts shadcn depends on (solid borders, form controls inheriting the page font).
-Existing rules live in `@layer app`, ordered before `utilities`, so Tailwind spacing
-utilities win over the global `* { margin: 0; padding: 0 }` reset while the app keeps
-overriding the base layer.
+utilities but **not Preflight**, because the hand-tuned Up theme already has its own reset
+and Preflight's global `line-height` would shift it. A small `base` layer recreates the
+parts shadcn depends on. Existing rules live in `@layer app`, ordered before `utilities`,
+so Tailwind spacing utilities win over the global `* { margin: 0; padding: 0 }` reset while
+the app keeps overriding the base layer.
 
 Generated components read shadcn's semantic tokens (`--background`, `--primary`,
 `--border`, ...). They are mapped to the Up palette in the `:root` block at the top of
-`src/index.css`, so components match the app out of the box; change them there to
-re-theme everything at once.
-
-The v4 CLI generates components that import `cn` from the `cn` package. `src/lib/utils.ts`
-is kept because `components.json` still aliases `utils` there for registry entries that
-use the conventional `@/lib/utils` import.
+`src/index.css`, so components match the app out of the box; change them there to re-theme
+everything at once.
 
 ## Development
 
-One command starts both processes via [honcho](https://github.com/nickstenning/honcho)
-(defined in `Procfile`). Vite proxies `/api` and `/logout` to FastAPI, so the session
-cookie stays same-origin.
-
-The proxy is configured with `changeOrigin: false` on purpose. Vite flips it to `true`
-for the string shorthand form (`'/api': 'http://...'`), which rewrites the `Host` header
-to `127.0.0.1:8000`; the server's CSRF check then sees `Origin: http://localhost:5173`
-against a different host and returns `403 cross_origin_request_blocked`, which browsers
-report as a CORS/blocked request. `X-Forwarded-Host` is also accepted for proxies that
-do rewrite `Host`.
-
 ```bash
-cp .env.example .env    # optional: tune the session lifetime
-uv sync                 # installs Python deps, including honcho
-cd frontend && npm install && cd ..
-
-uv run honcho start
+cd frontend
+npm install
+npm run dev
 ```
 
-Open <http://localhost:5173>. Logs from both processes are prefixed with `api.1` and
-`web.1`; Ctrl+C stops both. API docs are at <http://localhost:8000/docs>.
+Open <http://localhost:5173>. There is no proxy: the dev server serves the app and the
+browser calls `api.up.com.au` directly. The local cache needs a secure context;
+`localhost` qualifies, and any other host must be served over HTTPS.
 
-Sessions are stored in `.sessions.sqlite3` next to `main.py`, so a login survives server
-restarts. That file holds live Up tokens: it is created with `0600` permissions and
-ignored by git and Docker.
-
-The local cache needs a secure context. `localhost` qualifies; any other host must be
-served over HTTPS.
-
-The `Procfile` is just:
-
-```procfile
-api: uvicorn main:app --reload --port 8000
-web: npm --prefix frontend run dev -- --port 5173
-```
-
-So you can still run the processes separately if you prefer:
-
-```bash
-uv run uvicorn main:app --reload --port 8000
-npm --prefix frontend run dev
-```
-
-### Checks
+## Checks
 
 ```bash
 cd frontend
@@ -260,84 +275,51 @@ npm run lint
 npm run build
 
 npm run test:db          # collections, select, orderBy, pagination, teardown
+npm run test:csv         # CSV columns, escaping, formula-injection guard
 npm run test:persistence # local cache falls back to memory without OPFS
-npm run test:render      # production bundle in happy-dom: session probe → accounts →
+npm run test:render      # production bundle in happy-dom: boot → accounts →
                          # transactions → load more → sign out → re-login
 ```
 
 `test:render` runs against `dist`, so build first.
 
-## Production build
+## Production build & hosting
 
 ```bash
 cd frontend
 npm run build
-
-cd ..
-uv run uvicorn main:app --port 8000
 ```
 
-FastAPI serves `frontend/dist` at `/`, mounts hashed assets under `/assets`, and falls back
-to `index.html` for client-side routes. If `dist` is missing, `/` returns a 503 with a
-build hint.
+Everything needed is in `frontend/dist/`. Serve it from any static host (GitHub Pages,
+Netlify, Cloudflare Pages, S3, ...). Configure the host to serve `index.html` for unknown
+paths (SPA fallback) and to send the headers listed above. The CSP meta tag is already in
+the built `index.html`, and `sw.js` sits at the root so its scope covers the whole app.
+Serve everything over HTTPS: both service workers and OPFS require a secure context.
 
-## Docker
-
-```bash
-docker compose build
-docker compose up -d
-```
-
-The app is served on <http://localhost:8000>.
-
-### Environment variables
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `SESSION_TTL_DAYS` | Optional | Login lifetime in days (default `30`). Slides forward on each visit. |
-| `SESSION_VERIFY_HOURS` | Optional | How often the boot probe re-checks the Up token (default `6`). Between checks the stored session is trusted. |
-| `SESSION_DB_PATH` | Optional | Path to the session store (default `.sessions.sqlite3` next to `main.py`). |
-| `SESSION_HTTPS_ONLY` | Recommended in prod | Set to any non-empty value to mark cookies `Secure`. |
-| `ALLOWED_ORIGINS` | Optional | Comma-separated extra origins allowed to make unsafe requests, e.g. `https://upbank.example.com`. Same-origin is always allowed. |
-| `WEBHOOK_URL` | Optional | Public HTTPS URL for webhook delivery, e.g. `https://upbank.example.com/api/webhooks`. HTTP or localhost URLs are ignored. |
-
-Webhooks require a publicly reachable HTTPS URL (for example via ngrok during local
-development). Without one, real-time updates are disabled but everything else works.
-
-## API routes
+## Up API endpoints used
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | React SPA |
-| POST | `/api/login` | JSON login (`{"accessToken": "..."}`) → `{ ok, uid, expiresAt }` |
-| GET | `/api/session` | Boot probe → `{ authenticated, uid, expiresAt, verified, verifiedAt }` |
-| POST | `/api/logout` | Delete webhook + clear session |
-| GET | `/logout` | Same, then redirect home |
-| GET | `/api/accounts` | Fresh account balances |
-| GET | `/api/accounts/{id}/transactions` | Account transactions with filters |
-| GET | `/api/transactions/next` | Next page by cursor |
-| GET | `/api/tags` | All tags |
-| POST | `/api/transactions/{id}/tags` | Add tags to a transaction |
-| DELETE | `/api/transactions/{id}/tags` | Remove tags from a transaction |
-| PATCH | `/api/transactions/{id}/category` | Set/clear transaction category |
-| POST | `/api/webhooks` | Receive Up webhook events (HMAC-SHA256 verified) |
-| GET | `/api/events` | Drain queued events |
-
-Unsafe methods (`POST`/`PATCH`/`DELETE`) are rejected with `403` when an `Origin` header is
-present and matches neither the request host, `X-Forwarded-Host`, nor `ALLOWED_ORIGINS`.
+| GET | `/util/ping` | Validate the token on login and on the boot probe |
+| GET | `/accounts` | Account balances |
+| GET | `/accounts/{id}` | Account name (for the CSV filename) |
+| GET | `/accounts/{id}/transactions` | Transactions with `filter[...]` (status, since, until) |
+| GET | `/categories` | Category id → name map |
+| GET | `/tags` | All tags (fetched by the shared client) |
 
 ## Notes
 
-- Like the original, this is a single-user app: the access token (for webhook handling) and
-  webhook secret live in module-level state because Up's webhook callbacks arrive without a
-  browser session. The session table can hold several browser sessions, but they share that
-  module-level token.
-- Webhook signatures are verified with HMAC-SHA256 against the raw request body.
-- The main bundle is ~230 kB gzipped (TanStack DB, React, and the persistence wrapper). The
-  SQLite engine is a separate ~530 kB gzipped wasm asset that is only fetched the first time
-  the local cache opens, from a worker.
-- `GET /api/session` costs at most one Up `util/ping` per `SESSION_VERIFY_HOURS`. That is
-  what stops a revoked token from rendering cached rows without pinging Up on every load.
+- Single-user: Up allows one personal access token at a time. The client caches rows per
+  token fingerprint, so switching tokens starts from a clean cache.
+- The main bundle is ~233 kB gzipped (TanStack DB, React, and the persistence wrapper).
+  The SQLite engine is a separate ~530 kB gzipped wasm asset fetched the first time the
+  local cache opens, from a worker.
 - The local cache is a convenience, not a source of truth. Balances and transaction status
   change server-side; anything that happened while the tab was closed appears on the next
-  sync (reconnect, webhook, or Refresh).
+  sync (reconnect, focus, poll, or Refresh).
+- The service worker cache name carries a build id, so each deploy installs a fresh cache
+  and the old one is deleted on activate. `navigator.storage.persist()` is best-effort:
+  some browsers grant it silently, others ignore it.
+- This app was previously a FastAPI + React project. The backend (token store, CORS proxy,
+  webhook receiver, CSV endpoint) was removed in favour of the browser talking to Up
+  directly; see git history for the original.

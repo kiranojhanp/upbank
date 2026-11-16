@@ -10,7 +10,7 @@ import {
  * Durable local cache for TanStack DB collections, backed by SQLite in OPFS.
  *
  * Rows are written through `persistedCollectionOptions`; see `db.ts`. The
- * database is named after the server-supplied user fingerprint, so two Up
+ * database is named after the token-derived user fingerprint, so two Up
  * accounts on the same browser never read each other's rows. Signing out
  * removes the database.
  *
@@ -44,6 +44,62 @@ function opfsSupported(): boolean {
   )
 }
 
+/**
+ * Ask the browser to keep this origin's storage from being evicted under disk
+ * pressure. Best-effort: some browsers grant it silently, others ignore it.
+ */
+async function requestPersistentStorage(): Promise<void> {
+  const storage = typeof navigator === 'undefined' ? undefined : navigator.storage
+  if (!storage?.persist) return
+  try {
+    if (storage.persisted && (await storage.persisted())) return
+    await storage.persist()
+  } catch (error) {
+    console.warn('[local cache] could not request persistent storage', error)
+  }
+}
+
+/** Refuse to attach the cache when the origin is nearly out of room. */
+async function hasRoomForCache(): Promise<boolean> {
+  const storage = typeof navigator === 'undefined' ? undefined : navigator.storage
+  if (!storage?.estimate) return true
+  try {
+    const { usage, quota } = await storage.estimate()
+    if (!quota || usage === undefined) return true
+    return usage / quota < 0.95
+  } catch {
+    return true
+  }
+}
+
+/**
+ * True when an error means the browser's storage quota was exceeded. Unwraps
+ * the persistence layer's `PersistedCollectionDurabilityError`, which carries
+ * the original failure on `cause`.
+ */
+export function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { name?: string; message?: string; cause?: unknown }
+  if (candidate.name === 'QuotaExceededError') return true
+  if (typeof candidate.message === 'string' && /quota/i.test(candidate.message)) return true
+  if (candidate.cause && candidate.cause !== error) return isQuotaExceededError(candidate.cause)
+  return false
+}
+
+/**
+ * Surface quota failures from the persistence layer's background writes, which
+ * would otherwise appear only as unhandled rejections. The cache keeps whatever
+ * was already stored; nothing crashes.
+ */
+export function installStorageGuards(): void {
+  if (typeof window === 'undefined') return
+  window.addEventListener('unhandledrejection', (event) => {
+    if (isQuotaExceededError(event.reason)) {
+      console.warn('[local cache] storage quota exceeded; the local cache may be incomplete')
+    }
+  })
+}
+
 async function removeDatabaseFiles(uid: string): Promise<void> {
   if (!opfsSupported()) return
   const name = databaseFileName(uid)
@@ -65,6 +121,14 @@ const openCaches = new Map<string, Promise<LocalCache | null>>()
 
 async function open(uid: string): Promise<LocalCache | null> {
   if (!opfsSupported()) return null
+
+  // Don't attach a cache we have no room to write to; a failed write would
+  // surface as a durability error later. Fall back to memory instead.
+  if (!(await hasRoomForCache())) {
+    console.warn('[local cache] origin storage nearly full, using memory only')
+    return null
+  }
+  await requestPersistentStorage()
 
   const name = databaseFileName(uid)
   let database: BrowserWASQLiteDatabase

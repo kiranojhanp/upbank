@@ -1,10 +1,16 @@
-.venv/
-__pycache__/
-*.pyc
-.env
-.sessions.sqlite3*
-.agents/
 .DS_Store
+
+# Frontend build + dependencies
 frontend/node_modules/
 frontend/dist/
+frontend/.csv-check/
 frontend/.persistence-smoke/
+
+# Tooling
+.agents/
+
+# Leftovers from the removed Python backend — safe to delete. Kept ignored so a
+# local .env or session store that held secrets can never be committed.
+.venv/
+.env
+.sessions.sqlite3*

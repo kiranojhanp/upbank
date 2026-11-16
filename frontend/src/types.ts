@@ -58,16 +58,6 @@ export interface AccountsResponse {
   accounts: Account[]
 }
 
-export interface EventItem {
-  type: string
-  description?: string
-  amount?: string
-}
-
-export interface EventsResponse {
-  events: EventItem[]
-}
-
 export interface TransactionFilters {
   status?: string
   since?: string

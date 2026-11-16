@@ -22,9 +22,9 @@ import type { Account, Transaction, TransactionFilters, TransactionsResponse } f
  * private mode, tests — the store is in-memory only.
  *
  * `initialRender` uses a 0 ms network-first deadline: restored rows render
- * immediately. That is safe because `App` only mounts collections after
- * `GET /api/session` has confirmed the session, so cached rows are never shown
- * for a signed-out or revoked account.
+ * immediately. That is safe because `App` only mounts collections once the
+ * stored token has passed its boot probe, so cached rows are never shown for a
+ * signed-out or revoked account.
  */
 
 /** Degrades to the plain in-memory config when no cache is attached. */
@@ -49,8 +49,8 @@ function withPersistence<T extends object, TKey extends string | number, U exten
  *
  * A collection only fetches on mount when there is no cached copy to render.
  * With a stored copy (`rows > 0`) the sync is disabled, restored rows render
- * immediately, and a fetch happens only on a manual refresh, on reconnect, or
- * when a webhook event says something changed. `enabled` is computed while the
+ * immediately, and a fetch happens only on a manual refresh, on reconnect, on
+ * tab focus, or from the visible-tab poll. `enabled` is computed while the
  * collection is configured, which is why it reads the metadata synchronously.
  */
 export function shouldFetchOnMount(client: DbClient, cacheKey: string): boolean {

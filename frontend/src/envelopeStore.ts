@@ -9,7 +9,7 @@
  * `localStorage` is used rather than SQLite because the values are tiny and
  * synchronous, and because `enabled` must be decided while a collection is
  * being configured. Like the SQLite cache, everything here is namespaced by the
- * server-issued user fingerprint and removed on sign out.
+ * token-derived user fingerprint and removed on sign out.
  */
 export interface StoredEnvelope {
   /** Rows the last successful fetch produced. 0 means "do not assume a cache". */

@@ -6,9 +6,19 @@ interface FiltersProps {
   onChange: (next: TransactionFilters) => void
   onApply: () => void
   onClear: () => void
+  onExport: () => void
+  exporting: boolean
 }
 
-export function Filters({ title, value, onChange, onApply, onClear }: FiltersProps) {
+export function Filters({
+  title,
+  value,
+  onChange,
+  onApply,
+  onClear,
+  onExport,
+  exporting,
+}: FiltersProps) {
   return (
     <div className="tx-header">
       <h2 className="tx-title">{title}</h2>
@@ -44,6 +54,14 @@ export function Filters({ title, value, onChange, onApply, onClear }: FiltersPro
         </button>
         <button className="filter-btn filter-btn-secondary" onClick={onClear}>
           Clear
+        </button>
+        <button
+          className="filter-btn filter-btn-export"
+          onClick={onExport}
+          disabled={exporting}
+          title="Export to CSV (uses the selected date range)"
+        >
+          {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
       </div>
     </div>

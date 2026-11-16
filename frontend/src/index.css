@@ -621,6 +621,17 @@ main.blur-background {
 }
 .filter-btn-secondary:hover { background: var(--raise); color: var(--t1); }
 
+.filter-btn-export {
+  background: var(--lift);
+  color: var(--up);
+  border: 1px solid var(--line-b);
+}
+.filter-btn-export:hover:not(:disabled) {
+  background: var(--raise);
+  border-color: var(--up);
+}
+.filter-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ─── transaction list ───────────────────────────────────────── */
 .transaction-list { display: flex; flex-direction: column; }
 

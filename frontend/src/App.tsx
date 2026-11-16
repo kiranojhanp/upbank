@@ -1,6 +1,7 @@
 import { DbProvider, useLiveQuery } from '@tanstack/react-db'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SessionExpiredError, api } from './api'
+import { clearToken, isFreshlyVerified, loadToken, markVerified, uidForToken } from './auth'
 import { Dashboard } from './components/Dashboard'
 import { Login } from './components/Login'
 import { accountsDescriptor, createSessionClient, type SessionClient } from './db'
@@ -21,8 +22,8 @@ export default function App() {
   const clientRef = useRef<SessionClient | null>(null)
   const bootRequest = useRef<Promise<void> | null>(null)
 
-  // A fresh store per session. The cache is scoped to the uid the server
-  // reports, so two Up accounts on one browser never share rows.
+  // A fresh store per session. The cache is scoped to the uid derived from the
+  // token, so two Up accounts on one machine never share rows.
   const activate = useCallback(async (uid: string) => {
     const cache = await openLocalCache(uid)
     const client = createSessionClient(uid, cache)
@@ -30,33 +31,51 @@ export default function App() {
     setBoot({ phase: 'ready', client })
   }, [])
 
-  // Boot probe. It runs before any collection is materialised, so restored
-  // rows can never render for a signed-out browser. StrictMode's second mount
-  // reuses the same request instead of opening a second database.
+  const endSession = useCallback(async (message: string | null, { wipe }: { wipe: boolean }) => {
+    const client = clientRef.current
+    clientRef.current = null
+    setBoot({ phase: 'signed-out', error: message })
+    if (!client) return
+    // Let React unmount the dashboard before SQLite stops serving reads.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await client.dispose({ wipe })
+  }, [])
+
+  // Boot from the locally stored token. There is no server session to ask, so
+  // a token renders immediately (from cache) and is only re-checked against Up
+  // once per verify window. A revoked token signs out before it can render
+  // cached rows; an unreachable Up still boots offline.
   useEffect(() => {
     if (bootRequest.current) return
     bootRequest.current = (async () => {
+      const token = loadToken()
+      if (!token) {
+        setBoot({ phase: 'signed-out', error: null })
+        return
+      }
+
       try {
-        const session = await api.session()
-        await activate(session.uid)
+        const uid = await uidForToken(token)
+
+        if (!isFreshlyVerified()) {
+          const status = await api.checkToken()
+          if (status === 'invalid') {
+            clearToken()
+            setBoot({
+              phase: 'signed-out',
+              error: 'Your session has expired. Please log in again.',
+            })
+            return
+          }
+          if (status === 'valid') markVerified()
+        }
+
+        await activate(uid)
       } catch {
         setBoot({ phase: 'signed-out', error: null })
       }
     })()
   }, [activate])
-
-  const endSession = useCallback(
-    async (message: string | null, { wipe }: { wipe: boolean }) => {
-      const client = clientRef.current
-      clientRef.current = null
-      setBoot({ phase: 'signed-out', error: message })
-      if (!client) return
-      // Let React unmount the dashboard before SQLite stops serving reads.
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      await client.dispose({ wipe })
-    },
-    [],
-  )
 
   const handleSignedIn = useCallback(
     async (uid: string) => {
@@ -85,7 +104,7 @@ export default function App() {
           void endSession('Your session has expired. Please log in again.', { wipe: false })
         }
         onUnavailable={() =>
-          void endSession('Could not reach the server. Please try again.', { wipe: false })
+          void endSession('Could not reach Up. Please try again.', { wipe: false })
         }
         onSignOut={() => void endSession(null, { wipe: true })}
       />
