@@ -19,6 +19,7 @@ import { AccountCard, SidebarBrand } from './AccountCard'
 import { BackupDialog } from './BackupDialog'
 import { Filters } from './Filters'
 import { PlanView } from './PlanView'
+import { PlanModal } from './PlanModal'
 import { WeekView } from './WeekView'
 import { Toasts, type ToastItem } from './Toasts'
 import { TransactionsView, type TransactionsHandle } from './TransactionsView'
@@ -83,9 +84,34 @@ function EyeClosedIcon() {
   )
 }
 
+function BackupIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v13M7 11l5 5 5-5M4 21h16" />
+    </svg>
+  )
+}
+
+function ClearCacheIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" />
+    </svg>
+  )
+}
+
+function SignOutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3" />
+    </svg>
+  )
+}
+
 export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: DashboardProps) {
   const [view, setView] = useState<'accounts' | 'week' | 'plan'>('week')
   const [backupOpen, setBackupOpen] = useState(false)
+  const [confirmClearCache, setConfirmClearCache] = useState(false)
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [draftFilters, setDraftFilters] = useState<TransactionFilters>({})
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
@@ -459,25 +485,37 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
-            <button
-              type="button"
-              className="logout-link"
-              onClick={() => setBackupOpen(true)}
-            >
-              Backup data
-            </button>
-            {cacheAvailable && (
+            <div className="sidebar-actions" role="group" aria-label="Data and session">
               <button
                 type="button"
-                className="logout-link"
-                onClick={() => void handleClearCache()}
+                className="sidebar-action-btn"
+                aria-label="Backup data"
+                data-tooltip="Backup data"
+                onClick={() => setBackupOpen(true)}
               >
-                Clear cache
+                <BackupIcon />
               </button>
-            )}
-            <button type="button" className="logout-link" onClick={onSignOut}>
-              Sign out
-            </button>
+              {cacheAvailable && (
+                <button
+                  type="button"
+                  className="sidebar-action-btn is-danger"
+                  aria-label="Clear cache"
+                  data-tooltip="Clear cache"
+                  onClick={() => setConfirmClearCache(true)}
+                >
+                  <ClearCacheIcon />
+                </button>
+              )}
+              <button
+                type="button"
+                className="sidebar-action-btn is-danger"
+                aria-label="Sign out"
+                data-tooltip="Sign out"
+                onClick={onSignOut}
+              >
+                <SignOutIcon />
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -561,6 +599,39 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
       {backupOpen && (
         <BackupDialog uid={uid} onClose={() => setBackupOpen(false)} />
       )}
+
+      <PlanModal
+        open={confirmClearCache}
+        onOpenChange={setConfirmClearCache}
+        title="Clear cached Up data?"
+        description="This removes the offline account and transaction cache. Your recurring plan, paid history and token stay."
+        footer={
+          <div className="plan-modal-actions">
+            <div className="plan-modal-actions-left" />
+            <div className="plan-modal-actions-right">
+              <button
+                type="button"
+                className="plan-btn plan-btn-ghost"
+                onClick={() => setConfirmClearCache(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="plan-btn plan-btn-danger"
+                onClick={() => void handleClearCache()}
+              >
+                Clear cache
+              </button>
+            </div>
+          </div>
+        }
+      >
+        <p className="plan-confirm-copy">
+          The app will reload and fetch fresh balances and transactions from Up. Your
+          recurring expenses and paid history are kept.
+        </p>
+      </PlanModal>
     </>
   )
 }

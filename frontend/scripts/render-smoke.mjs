@@ -213,7 +213,9 @@ await new Promise((resolve) => setTimeout(resolve, 80))
 
 // Sign out is local now (no server session to clear) and must land on login.
 const signOut = Array.from(page.document.querySelectorAll('button')).find(
-  (button) => button.textContent?.trim() === 'Sign out',
+  (button) =>
+    button.getAttribute('aria-label') === 'Sign out' ||
+    button.textContent?.trim() === 'Sign out',
 )
 signOut?.click()
 const isLoginScreen = () => Boolean(page.document.querySelector('input[name="accessToken"]'))

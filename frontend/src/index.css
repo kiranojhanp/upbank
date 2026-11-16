@@ -390,6 +390,120 @@ body {
 .refresh-btn:hover:not(:disabled) { color: var(--up); border-color: var(--up); }
 .refresh-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-top: 0.05rem;
+}
+
+.sidebar-action-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line-b);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--t2);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.sidebar-action-btn svg { width: 15px; height: 15px; }
+.sidebar-action-btn:hover {
+  color: var(--up);
+  border-color: rgba(255,122,0,0.35);
+  background: var(--up-dim);
+}
+.sidebar-action-btn.is-danger:hover {
+  color: #FF8A9B;
+  border-color: rgba(255,69,96,0.3);
+  background: rgba(255,69,96,0.06);
+}
+.sidebar-action-btn:focus-visible {
+  outline: 2px solid var(--up);
+  outline-offset: 2px;
+}
+
+.sidebar-action-btn::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  z-index: 51;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--line-b);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+.sidebar-action-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 50;
+  transform: translate(-50%, 3px);
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--line-b);
+  border-radius: 5px;
+  background: var(--raise);
+  color: var(--t1);
+  font-family: var(--fb);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s, visibility 0.12s, transform 0.12s;
+}
+.sidebar-action-btn:hover::before,
+.sidebar-action-btn:focus-visible::before,
+.sidebar-action-btn:hover::after,
+.sidebar-action-btn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+.sidebar-action-btn:hover::after,
+.sidebar-action-btn:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+
+/* Keep the first/last tooltip inside the sidebar instead of clipping at its edge. */
+.sidebar-action-btn:first-child::after {
+  left: 0;
+  transform: translate(0, 3px);
+}
+.sidebar-action-btn:first-child:hover::after,
+.sidebar-action-btn:first-child:focus-visible::after {
+  transform: translate(0, 0);
+}
+.sidebar-action-btn:first-child::before {
+  left: 17px;
+  transform: translateX(-50%);
+}
+.sidebar-action-btn:last-child::after {
+  right: 0;
+  left: auto;
+  transform: translate(0, 3px);
+}
+.sidebar-action-btn:last-child:hover::after,
+.sidebar-action-btn:last-child:focus-visible::after {
+  transform: translate(0, 0);
+}
+.sidebar-action-btn:last-child::before {
+  right: 17px;
+  left: auto;
+  transform: translateX(50%);
+}
+
 .logout-link {
   font-size: 0.82rem;
   color: var(--t2);
