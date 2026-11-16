@@ -13,6 +13,7 @@ and caches what it fetches on the device. There is no server to run.
 - **TanStack Query + TanStack DB** — infinite-query pagination with local-first row collections
 - **OPFS SQLite** (`wa-sqlite`) — a durable, per-user cache of those collections
 - **Tailwind CSS v4 + shadcn/ui** — styling and primitives
+- **Playwright** — real-browser end-to-end tests against the production build
 - **No backend** — deploy the built `dist/` to any static host
 
 ## Features
@@ -310,10 +311,18 @@ try_files $uri /index.html;
 ```
 README.md
 .gitignore
+.github/workflows/ci.yml  Lint, typecheck, build, unit tests and Playwright in CI
 frontend/
   index.html             Vite entry point (CSP meta and manifest link)
   vite.config.ts         Tailwind, SQLite assets, CSP/security headers, service worker
+  playwright.config.ts   Chromium project, production preview web server, traces
+  tsconfig.e2e.json      Typecheck config for the e2e sources
   components.json        shadcn/ui CLI configuration
+  e2e/
+    fixtures.ts          Per-test Up API mock + app page object
+    pages/AppPage.ts     Role-based app page object
+    support/up-api.ts    Stateful fake of the Up API
+    specs/               auth, transactions, offline/PWA, security, responsive
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
     manifest.webmanifest Web app manifest
@@ -412,9 +421,35 @@ npm run test:persistence # cache fallback, envelope TTL/validation, forget a use
 npm run test:render      # production bundle in happy-dom: boot → accounts →
                          # transactions → load more → offline → sign out →
                          # re-login → 401, plus CSP/header/token assertions
+
+npm run typecheck:e2e    # typecheck the Playwright sources
+npm run test:e2e         # real Chromium against the production build
 ```
 
-`test:render` runs against `dist`, so build first.
+`test:render` runs against `dist`, so build first. The first e2e run also needs a
+browser: `npx playwright install chromium` (CI installs it with system dependencies).
+
+## End-to-end tests
+
+The Playwright suite drives the real production bundle in Chromium. It does not use a
+token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
+`https://api.up.com.au`, including CORS preflights, cursor pages, CSV pagination,
+401s, 500s and a failing next page.
+
+| Spec | Coverage |
+| --- | --- |
+| `auth.spec.ts` | validation, invalid token, successful login, reload, sign out and cache wipe |
+| `transactions.spec.ts` | balances, filters, cursor pagination, refresh preserving pages, detail panel, CSV download/formula guard, error toasts |
+| `offline.spec.ts` | service worker + OPFS restore on a cold offline reload, then `filter[until]` load-more anchoring |
+| `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
+| `resilience.spec.ts` | empty account state and the mobile account drawer |
+
+The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel
+with isolated browser contexts (so OPFS and localStorage do not leak between tests),
+records trace/screenshot/video on failure, and writes an HTML report to
+`playwright-report/`. Use `npm run test:e2e:headed` or `npm run test:e2e:debug` while
+developing. `.github/workflows/ci.yml` runs lint, e2e typecheck, build, the Node smoke
+tests and the Playwright suite on every push and pull request, and uploads the report.
 
 ## Production build & hosting
 
