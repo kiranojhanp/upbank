@@ -62,7 +62,7 @@ export function WeekView({
             {formatWeekRange(weekStart)}
           </h2>
           <p className="week-subtitle">
-            Pick a budget entry, then click one of this week&apos;s transactions to attach it.
+            Pick a recurring expense, then mark it paid with its Up transaction.
           </p>
         </div>
         <div className="week-header-actions">
@@ -76,7 +76,7 @@ export function WeekView({
             </button>
           )}
           <button type="button" className="plan-btn plan-btn-ghost" onClick={onOpenPlan}>
-            Set-aside plan
+            Recurring expenses
           </button>
         </div>
       </header>

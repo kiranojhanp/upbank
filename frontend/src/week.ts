@@ -1,71 +1,22 @@
 /**
- * Week-domain helpers for the Wed–Tue budgeting view.
+ * Week-domain helpers for the Wednesday–Tuesday recurring-expense view.
  *
- * The week is the unit of work: a set of budget entries (seeded from the
- * recurring set-aside plan, then editable for this week only) and the Up
- * transactions that have been attached to them. A transaction is "spent" once
- * it is attached; the rest of the week's spending is surfaced as unassigned.
- *
- * Dates stay as local `YYYY-MM-DD` strings so a week never shifts under a
- * daylight-saving change, and money stays in integer cents.
+ * A recurring expense has a start date and a frequency. The occurrence that
+ * falls inside a week is what appears in that week's list. Marking it paid
+ * records that occurrence; the next occurrence is generated independently, so
+ * a weekly expense disappears from this week and appears again next week.
  */
 import {
   addDaysIso,
   daysBetweenIso,
   isoDateParts,
   localDateIso,
+  nextOccurrenceAfter,
+  nextOccurrenceOnOrAfter,
   weeklySetAsideCents,
   type PlanRow,
 } from './budget'
-
-export const MAX_WEEK_ENTRIES = 200
-export const MAX_TRANSACTION_ID_LENGTH = 120
-
-export interface WeekEntry {
-  id: string
-  name: string
-  budgetCents: number
-  /** The set-aside row this entry was seeded from, when it came from the plan. */
-  sourcePlanId?: string
-}
-
-export interface WeekSnapshot {
-  entries: WeekEntry[]
-  /** Attached Up transaction id → entry id. Only ids are stored, never transaction details. */
-  links: Record<string, string>
-  updatedAt: number
-}
-
-/** A debit transaction, normalised for the week view. */
-export interface WeekTransaction {
-  id: string
-  description: string
-  createdAt: string
-  /** Positive number of cents spent (Up reports debits as negative values). */
-  amountCents: number
-  accountName: string
-  status: string
-}
-
-export interface WeekEntrySummary {
-  entry: WeekEntry
-  spentCents: number | null
-  remainingCents: number | null
-  attached: WeekTransaction[]
-  /** Links recorded even when transaction details are not currently loaded. */
-  linkedCount: number
-}
-
-export interface WeekSummary {
-  entries: WeekEntrySummary[]
-  plannedCents: number
-  /** null when transaction details are unavailable (offline / not fetched yet). */
-  spentCents: number | null
-  leftCents: number | null
-  unassignedCount: number
-  unassignedCents: number | null
-  transactionCount: number
-}
+import { paidKey, type PaidMap } from './paidStore'
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_SHORT = [
@@ -82,6 +33,35 @@ const MONTH_SHORT = [
   'Nov',
   'Dec',
 ]
+
+/** A debit transaction, normalised for the week view and paid picker. */
+export interface WeekTransaction {
+  id: string
+  description: string
+  createdAt: string
+  /** Positive number of cents spent (Up reports debits as negative values). */
+  amountCents: number
+  accountName: string
+  status: string
+}
+
+export interface WeekOccurrence {
+  expense: PlanRow
+  date: string
+  key: string
+  paid: boolean
+  transactionId?: string
+}
+
+export interface WeekSummary {
+  occurrences: WeekOccurrence[]
+  due: WeekOccurrence[]
+  paid: WeekOccurrence[]
+  dueCents: number
+  paidCents: number
+  /** The recurring plan's weekly set-aside total, shown for reference. */
+  weeklySetAsideCents: number
+}
 
 function utcWeekday(iso: string): number {
   const parts = isoDateParts(iso)
@@ -152,90 +132,74 @@ export function weekRelativeLabel(weekStart: string, todayIso = localDateIso()):
   return difference > 0 ? `In ${weeks} weeks` : `${weeks} weeks ago`
 }
 
-/**
- * One entry per recurring set-aside row, using the same weekly amount as the
- * sheet. Ids are derived from the week and plan row, so they are stable for as
- * long as that week is read-only; the first edit or attachment materialises a
- * snapshot of the week in storage.
- */
-export function deriveWeekEntries(planRows: PlanRow[], weekStart: string): WeekEntry[] {
-  return planRows.slice(0, MAX_WEEK_ENTRIES).map((row) => ({
-    id: `week:${weekStart}:plan:${row.id}`,
-    name: row.name,
-    budgetCents: Math.max(
-      0,
-      Math.round(weeklySetAsideCents(row.amountCents, row.frequency)),
-    ),
-    sourcePlanId: row.id,
-  }))
+/** The occurrence of `expense` that falls in this week, or null. */
+export function occurrenceInWeek(
+  expense: PlanRow,
+  weekStart: string,
+  weekEnd: string,
+): string | null {
+  const date = nextOccurrenceOnOrAfter(expense.startDate, expense.frequency, weekStart)
+  return date <= weekEnd ? date : null
 }
 
-/**
- * Join budget entries, attachment links and the week's debit transactions.
- * `transactions === null` means the transaction source is not available, so
- * spend and remaining amounts are unknown rather than zero.
- */
+export function occurrenceForExpense(
+  expense: PlanRow,
+  date: string,
+): WeekOccurrence {
+  const key = paidKey(expense.id, date)
+  return { expense, date, key, paid: false }
+}
+
+/** The next occurrence after this one. Weekly → seven days later, etc. */
+export function nextDateAfterOccurrence(expense: PlanRow, date: string): string {
+  return nextOccurrenceAfter(expense.startDate, expense.frequency, date)
+}
+
 export function summariseWeek(
-  entries: WeekEntry[],
-  links: Record<string, string>,
-  transactions: WeekTransaction[] | null,
+  planRows: PlanRow[],
+  paid: PaidMap,
+  weekStart: string,
+  weekEnd: string,
 ): WeekSummary {
-  const entryIds = new Set(entries.map((entry) => entry.id))
-  const attached = new Map<string, WeekTransaction[]>()
-  const linkedCounts = new Map<string, number>()
-  for (const entry of entries) {
-    attached.set(entry.id, [])
-    linkedCounts.set(entry.id, 0)
+  const occurrences: WeekOccurrence[] = []
+  for (const expense of planRows) {
+    const date = occurrenceInWeek(expense, weekStart, weekEnd)
+    if (!date) continue
+    const key = paidKey(expense.id, date)
+    const payment = paid[key]
+    occurrences.push({
+      expense,
+      date,
+      key,
+      paid: Boolean(payment),
+      transactionId: payment?.transactionId,
+    })
   }
-  for (const entryId of Object.values(links)) {
-    if (entryIds.has(entryId)) {
-      linkedCounts.set(entryId, (linkedCounts.get(entryId) ?? 0) + 1)
-    }
-  }
+  const planOrder = new Map(planRows.map((expense, index) => [expense.id, index]))
+  occurrences.sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      (planOrder.get(a.expense.id) ?? 0) - (planOrder.get(b.expense.id) ?? 0),
+  )
 
-  let plannedCents = 0
-  for (const entry of entries) plannedCents += entry.budgetCents
-
-  let spentCents: number | null = null
-  let unassignedCents: number | null = null
-  let unassignedCount = 0
-
-  if (transactions) {
-    spentCents = 0
-    unassignedCents = 0
-    for (const transaction of transactions) {
-      spentCents += transaction.amountCents
-      const entryId = links[transaction.id]
-      if (entryId && entryIds.has(entryId)) {
-        attached.get(entryId)?.push(transaction)
-      } else {
-        unassignedCount += 1
-        unassignedCents += transaction.amountCents
-      }
-    }
+  let dueCents = 0
+  let paidCents = 0
+  for (const occurrence of occurrences) {
+    if (occurrence.paid) paidCents += occurrence.expense.amountCents
+    else dueCents += occurrence.expense.amountCents
   }
 
-  const entrySummaries: WeekEntrySummary[] = entries.map((entry) => {
-    const attachedTransactions = attached.get(entry.id) ?? []
-    const entrySpent = transactions
-      ? attachedTransactions.reduce((total, transaction) => total + transaction.amountCents, 0)
-      : null
-    return {
-      entry,
-      spentCents: entrySpent,
-      remainingCents: entrySpent === null ? null : entry.budgetCents - entrySpent,
-      attached: attachedTransactions,
-      linkedCount: linkedCounts.get(entry.id) ?? 0,
-    }
-  })
+  let weeklyExact = 0
+  for (const expense of planRows) {
+    weeklyExact += weeklySetAsideCents(expense.amountCents, expense.frequency)
+  }
 
   return {
-    entries: entrySummaries,
-    plannedCents,
-    spentCents,
-    leftCents: spentCents === null ? null : plannedCents - spentCents,
-    unassignedCount,
-    unassignedCents,
-    transactionCount: transactions?.length ?? 0,
+    occurrences,
+    due: occurrences.filter((occurrence) => !occurrence.paid),
+    paid: occurrences.filter((occurrence) => occurrence.paid),
+    dueCents,
+    paidCents,
+    weeklySetAsideCents: Math.round(weeklyExact),
   }
 }

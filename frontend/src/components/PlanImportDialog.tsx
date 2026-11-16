@@ -18,7 +18,7 @@ interface PlanImportDialogProps {
 const MAX_FILE_BYTES = 1_000_000
 
 const PLACEHOLDER =
-  'Expense Name\tBilled Amount ($)\tFrequency\tNext Due Date\n' +
+  'Expense Name\tBilled Amount ($)\tFrequency\tStart Date\n' +
   'Rent\t500.00\tWeekly\t2026-12-01\n' +
   'Internet\t80.00\tMonthly\t2026-12-05'
 
@@ -135,8 +135,8 @@ export function PlanImportDialog({
       <p className="plan-import-help">
         In Google Sheets, select the header row and the expenses (columns{' '}
         <strong>Expense Name</strong>, <strong>Billed Amount</strong>,{' '}
-        <strong>Frequency</strong> and <strong>Next Due Date</strong>), copy, then paste here.
-        Calculated columns such as Weekly Set-Aside are ignored.
+        <strong>Frequency</strong> and <strong>Start Date</strong>), copy, then paste here.
+        An older <strong>Next Due Date</strong> column is accepted as the start date.
       </p>
 
       <textarea
@@ -172,7 +172,7 @@ export function PlanImportDialog({
                   <span className="plan-import-preview-name">{row.name}</span>
                   <span className="plan-import-preview-meta">
                     {formatMoney(row.amountCents)} · {FREQUENCY_SPECS[row.frequency].label} ·{' '}
-                    {formatCalendarDate(row.nextDueDate)}
+                    {formatCalendarDate(row.startDate)}
                   </span>
                 </li>
               ))}

@@ -2401,8 +2401,8 @@ button.balance-toggle-btn {
 
 .week-summary-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, auto));
-  gap: 1.1rem;
+  grid-template-columns: repeat(2, minmax(0, auto));
+  gap: 1.4rem;
 }
 .week-summary-metrics div { display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; }
 .week-summary-metrics span {
@@ -2834,7 +2834,7 @@ button.balance-toggle-btn {
   .week-header-actions { width: 100%; padding-top: 0; }
   .week-header-actions .plan-btn { flex: 1; }
   .week-summary { grid-template-columns: 1fr; gap: 0.7rem; }
-  .week-summary-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
+  .week-summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
   .week-summary-metrics b { font-size: 0.78rem; }
   .week-entry-list { grid-template-columns: 1fr; }
   .week-entry:nth-child(odd) { border-right: 0; }
@@ -2856,6 +2856,307 @@ button.balance-toggle-btn {
   .week-tx { gap: 0.45rem; padding: 0.52rem 0.15rem; }
   .week-tx-amount { font-size: 0.71rem; }
   .week-entry-list { display: flex; }
+}
+
+
+/* ─── recurring expenses: compact management ─────────────────── */
+.plan-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--line);
+  overflow: hidden;
+}
+.plan-summary-strip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.8rem 1rem;
+  background: var(--surface);
+}
+.plan-summary-strip span {
+  color: var(--t3);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.plan-summary-strip b {
+  color: var(--t1);
+  font-family: var(--fm);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.plan-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(255,122,0,0.24);
+  border-radius: 8px;
+  background: var(--up-dim);
+}
+.plan-bulk-bar > span {
+  color: var(--up2);
+  font-family: var(--fm);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+.plan-bulk-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.plan-bulk-actions .plan-btn { padding: 0.3rem 0.7rem; font-size: 0.7rem; }
+
+.plan-list-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+  padding: 0 0.1rem;
+}
+.plan-check.plan-select-all {
+  width: auto;
+  height: auto;
+  justify-content: flex-start;
+  gap: 0.45rem;
+  color: var(--t3);
+  font-family: var(--fb);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.plan-select-all:hover { color: var(--t2); }
+
+.plan-expense-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.plan-expense-head,
+.plan-expense-row {
+  display: grid;
+  grid-template-columns: 26px minmax(150px, 1.5fr) 92px 96px 116px 106px 58px;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 1rem;
+}
+
+.plan-expense-head {
+  min-height: 34px;
+  border-bottom: 1px solid var(--line);
+  color: var(--t3);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.plan-expense-head .plan-num { text-align: right; }
+
+.plan-expense-row {
+  min-height: 53px;
+  border-bottom: 1px solid var(--line);
+  color: var(--t2);
+  font-size: 0.79rem;
+  transition: background 0.12s;
+}
+.plan-expense-row:last-child { border-bottom: 0; }
+.plan-expense-row:hover { background: var(--lift); }
+.plan-expense-row.is-selected { background: var(--up-dim); }
+
+.plan-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+.plan-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--up);
+  cursor: pointer;
+}
+
+.plan-expense-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--t1);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.plan-expense-amount,
+.plan-expense-start,
+.plan-expense-weekly {
+  color: var(--t2);
+  font-family: var(--fm);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.plan-expense-weekly { color: var(--t1); text-align: right; }
+.plan-expense-actions { display: flex; justify-content: flex-end; }
+
+/* ─── week: due occurrences and paid picker ──────────────────── */
+.week-summary-note {
+  margin-top: 0.35rem;
+  color: var(--t3);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.week-pay-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.week-pay-hint {
+  color: var(--t2);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  max-width: 46ch;
+}
+.week-pay-btn { align-self: flex-start; }
+
+.mark-paid-meta {
+  margin-bottom: 0.75rem;
+  color: var(--t3);
+  font-family: var(--fm);
+  font-size: 0.66rem;
+}
+
+.mark-paid-total {
+  color: var(--t2);
+  font-family: var(--fm);
+  font-size: 0.85rem;
+  letter-spacing: -0.02em;
+}
+
+.mark-paid-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+.mark-paid-head > span {
+  color: var(--t3);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mark-paid-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 0.65rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-b) transparent;
+}
+.mark-paid-list::-webkit-scrollbar { width: 4px; }
+.mark-paid-list::-webkit-scrollbar-thumb { background: var(--line-b); border-radius: 4px; }
+
+.mark-paid-row:disabled { opacity: 0.5; cursor: not-allowed; }
+.mark-paid-row.is-selected {
+  background: var(--up-dim);
+  box-shadow: inset 3px 0 0 var(--up);
+  border-radius: 6px;
+}
+
+.mark-paid-check {
+  flex-shrink: 0;
+  color: var(--up);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mark-paid-used {
+  flex-shrink: 0;
+  color: var(--t3);
+  font-size: 0.58rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .plan-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plan-expense-head { display: none; }
+  .plan-expense-list {
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+  .plan-expense-row {
+    position: relative;
+    display: block;
+    min-height: 0;
+    margin-bottom: 0.55rem;
+    padding: 0.75rem 0.8rem 0.65rem 2.5rem;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--surface);
+  }
+  .plan-expense-row:last-child { border-bottom: 1px solid var(--line); }
+  .plan-expense-row .plan-check {
+    position: absolute;
+    top: 0.8rem;
+    left: 0.8rem;
+  }
+  .plan-expense-name {
+    padding-right: 3rem;
+    font-size: 0.9rem;
+    white-space: normal;
+  }
+  .plan-expense-row > div[data-label] {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.22rem 0;
+    font-size: 0.75rem;
+  }
+  .plan-expense-row > div[data-label]::before {
+    content: attr(data-label);
+    color: var(--t3);
+    font-family: var(--fb);
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .plan-expense-weekly { text-align: right; }
+  .plan-expense-actions {
+    position: absolute;
+    top: 0.68rem;
+    right: 0.7rem;
+  }
+  .plan-expense-actions .plan-row-btn { padding: 0.28rem 0.55rem; font-size: 0.66rem; }
+}
+
+@media (max-width: 600px) {
+  .plan-summary-strip b { font-size: 0.88rem; }
+  .plan-summary-strip > div { padding: 0.7rem 0.8rem; }
+  .week-summary-note { font-size: 0.64rem; }
+  .mark-paid-list { max-height: 260px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

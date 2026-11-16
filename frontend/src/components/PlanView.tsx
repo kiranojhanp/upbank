@@ -2,17 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   FREQUENCY_SPECS,
   MAX_PLAN_ROWS,
-  advanceDueDate,
   formatCalendarDate,
-  formatDueLabel,
   formatMoney,
   planToCsv,
   summarisePlan,
+  weeklySetAsideCents,
   type PlanDraftRow,
   type PlanRow,
 } from '../budget'
 import { downloadBlob } from '../download'
 import { formatRelativeTime } from '../format'
+import { clearPaid, forgetPaidForExpenses } from '../paidStore'
 import { PLAN_PREFIX, clearPlan, newPlanId, readPlan, writePlan } from '../planStore'
 import { useToday } from '../useToday'
 import { PlanFormDialog } from './PlanFormDialog'
@@ -44,11 +44,6 @@ function ReceiptIcon() {
   )
 }
 
-function DueDot({ days }: { days: number }) {
-  const tone = days < 0 ? ' is-overdue' : days <= 7 ? ' is-soon' : ''
-  return <span className={`plan-status-dot${tone}`} aria-hidden="true" />
-}
-
 export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
   const initialPlan = useMemo(() => readPlan(uid), [uid])
   const [rows, setRows] = useState<PlanRow[]>(initialPlan.rows)
@@ -56,19 +51,24 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [confirmBulk, setConfirmBulk] = useState(false)
   const today = useToday()
 
   const summary = useMemo(() => summarisePlan(rows, today), [rows, today])
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedIds.has(row.id)),
+    [rows, selectedIds],
+  )
+  const allSelected = rows.length > 0 && selectedRows.length === rows.length
 
-  // A second tab editing the same plan should be reflected here rather than
-  // letting the two windows drift apart. `writePlan` only fires `storage` in
-  // other tabs, so this never fights a local edit.
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== null && !event.key.startsWith(PLAN_PREFIX)) return
       const snapshot = readPlan(uid)
       setRows(snapshot.rows)
       setSavedAt(snapshot.updatedAt)
+      setSelectedIds(new Set())
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
@@ -91,28 +91,66 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
     [uid, onNotify],
   )
 
+  function toggleRow(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.id)))
+  }
+
   function handleSave(draft: PlanDraftRow, id?: string) {
     if (id) {
-      commit(rows.map((row) => (row.id === id ? { ...draft, id } : row)))
-      onNotify('Expense updated', draft.name)
+      commit(
+        rows.map((row) =>
+          row.id === id
+            ? {
+                id,
+                name: draft.name,
+                amountCents: draft.amountCents,
+                frequency: draft.frequency,
+                startDate: draft.startDate,
+              }
+            : row,
+        ),
+      )
+      onNotify('Recurring expense updated', draft.name)
     } else {
       commit([...rows, { ...draft, id: newPlanId() }])
-      onNotify('Expense added', draft.name)
+      onNotify('Recurring expense added', draft.name)
     }
     setEditor(null)
   }
 
   function handleDelete(id: string) {
     const removed = rows.find((row) => row.id === id)
-    commit(rows.filter((row) => row.id !== id))
+    const saved = commit(rows.filter((row) => row.id !== id))
+    if (saved) forgetPaidForExpenses(uid, [id])
     setEditor(null)
-    onNotify('Expense removed', removed?.name)
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      next.delete(id)
+      return next
+    })
+    onNotify('Recurring expense removed', removed?.name)
   }
 
-  function handleMarkPaid(row: PlanRow) {
-    const nextDue = advanceDueDate(row.nextDueDate, row.frequency, today)
-    commit(rows.map((entry) => (entry.id === row.id ? { ...entry, nextDueDate: nextDue } : entry)))
-    onNotify('Marked paid', `${row.name} · next due ${formatCalendarDate(nextDue)}`)
+  function handleBulkDelete() {
+    const doomed = selectedRows.map((row) => row.id)
+    if (doomed.length === 0) return
+    const saved = commit(rows.filter((row) => !selectedIds.has(row.id)))
+    if (saved) forgetPaidForExpenses(uid, doomed)
+    setSelectedIds(new Set())
+    setConfirmBulk(false)
+    onNotify(
+      'Recurring expenses deleted',
+      `${doomed.length} ${doomed.length === 1 ? 'expense' : 'expenses'} removed`,
+    )
   }
 
   function handleImport(drafts: PlanDraftRow[], mode: 'append' | 'replace') {
@@ -120,10 +158,14 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
     const next =
       mode === 'replace' ? imported : [...rows, ...imported].slice(0, MAX_PLAN_ROWS)
     const added = mode === 'replace' ? imported.length : next.length - rows.length
-    commit(next)
+    const saved = commit(next)
+    // Replacing the plan also replaces the expenses those paid occurrences
+    // belonged to; appending leaves existing history alone.
+    if (saved && mode === 'replace') clearPaid(uid)
     setImportOpen(false)
+    setSelectedIds(new Set())
     onNotify(
-      mode === 'replace' ? 'Plan replaced' : 'Expenses imported',
+      mode === 'replace' ? 'Plan replaced' : 'Recurring expenses imported',
       `${added} ${added === 1 ? 'expense' : 'expenses'} ${
         mode === 'replace' ? 'now in the plan' : 'added to the plan'
       }.`,
@@ -131,20 +173,22 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
   }
 
   function handleDeletePlan() {
-    clearPlan(uid)
+    const cleared = clearPlan(uid)
+    if (cleared) clearPaid(uid)
     setRows([])
     setSavedAt(null)
+    setSelectedIds(new Set())
     setConfirmClear(false)
-    onNotify('Plan deleted', 'Every expense was removed from this browser.')
+    onNotify('Plan deleted', 'Every recurring expense and its paid history was removed.')
   }
 
   function handleExport() {
-    if (summary.rows.length === 0) return
+    if (rows.length === 0) return
     downloadBlob(
       new Blob([planToCsv(summary.rows)], { type: 'text/csv;charset=utf-8' }),
-      `set-aside-plan-${today}.csv`,
+      `recurring-expenses-${today}.csv`,
     )
-    onNotify('Plan exported', `${summary.rows.length} expenses · ${today}.csv`)
+    onNotify('Plan exported', `${rows.length} expenses · ${today}.csv`)
   }
 
   const hasRows = rows.length > 0
@@ -161,13 +205,13 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
           >
             ← Back to week
           </button>
-          <p className="plan-eyebrow">Recurring set-asides</p>
+          <p className="plan-eyebrow">Set-aside plan</p>
           <h2 id="plan-title" className="plan-title">
-            Set-aside plan
+            Recurring expenses
           </h2>
           <p className="plan-subtitle">
-            The template behind your weekly budgets. These weekly amounts seed a new week
-            until you edit that week.
+            The template behind each week. A start date and frequency generate the
+            occurrences you see in Week.
           </p>
         </div>
         <div className="plan-header-actions">
@@ -202,10 +246,11 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
           <div className="plan-empty-mark">
             <ReceiptIcon />
           </div>
-          <h3>No expenses yet</h3>
+          <h3>No recurring expenses yet</h3>
           <p>
-            Add your bills, or copy the rows straight out of the Google Sheet. The app keeps
-            the weekly target, catch-up and annual total up to date for you.
+            Add them here, or copy the rows straight out of the Google Sheet. Each
+            expense gets a start date and frequency; the weekly set-aside is calculated
+            for you.
           </p>
           <div className="plan-empty-actions">
             <button
@@ -223,195 +268,123 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
               Add one manually
             </button>
           </div>
-          <div className="plan-empty-steps">
-            <span>
-              <b>1</b> Paste the rows
-            </span>
-            <span>
-              <b>2</b> Set money aside weekly
-            </span>
-            <span>
-              <b>3</b> Top up what is due now
-            </span>
-          </div>
         </div>
       ) : (
         <>
-          <div className="plan-stats">
-            <article className="plan-stat plan-stat-primary" data-stat="weekly">
-              <p className="plan-stat-label">Weekly lock-in target</p>
-              <p className="plan-stat-value">{formatMoney(summary.weeklyCents)}</p>
-              <p className="plan-stat-caption">Transfer to your bills account each week</p>
-            </article>
-            <article className="plan-stat" data-stat="seed">
-              <p className="plan-stat-label">One-off seed / catch-up</p>
-              <p className="plan-stat-value">{formatMoney(summary.catchUpCents)}</p>
-              <p className="plan-stat-caption">
-                {summary.catchUpCents > 0
-                  ? 'Top up today to prevent a shortfall'
-                  : 'Every bill is already covered by its set-aside'}
-              </p>
-            </article>
-            <article className="plan-stat" data-stat="fortnightly">
-              <p className="plan-stat-label">Fortnightly pay-split</p>
-              <p className="plan-stat-value">{formatMoney(summary.fortnightlyCents)}</p>
-              <p className="plan-stat-caption">Per pay if you are paid fortnightly</p>
-            </article>
-            <article className="plan-stat" data-stat="annual">
-              <p className="plan-stat-label">Annual total</p>
-              <p className="plan-stat-value">{formatMoney(summary.annualCents)}</p>
-              <p className="plan-stat-caption">Total baseline yearly commitments</p>
-            </article>
-          </div>
-
-          <div className="plan-banner">
-            <div className="plan-banner-main">
-              <span className="plan-banner-kicker">This week</span>
-              <p>
-                Move <strong>{formatMoney(summary.weeklyCents)}</strong> aside
-                {summary.catchUpCents > 0 ? (
-                  <>
-                    {' '}
-                    and seed <strong>{formatMoney(summary.catchUpCents)}</strong> for the bills
-                    that are already close.
-                  </>
-                ) : (
-                  <> — every bill is fully covered by its set-aside.</>
-                )}
-              </p>
+          <div className="plan-summary-strip">
+            <div data-stat="weekly">
+              <span>Weekly set-aside</span>
+              <b>{formatMoney(summary.weeklyCents)}</b>
             </div>
-            <div className="plan-banner-chips">
-              {summary.overdueCount > 0 && (
-                <span className="plan-chip plan-chip-danger">
-                  {summary.overdueCount} overdue
-                </span>
-              )}
-              {summary.dueSoonCount > 0 && (
-                <span className="plan-chip">{summary.dueSoonCount} due within 7 days</span>
-              )}
-              {summary.overdueCount === 0 && summary.dueSoonCount === 0 && (
-                <span className="plan-chip plan-chip-ok">Nothing due this week</span>
-              )}
+            <div data-stat="seed">
+              <span>One-off catch-up</span>
+              <b>{formatMoney(summary.catchUpCents)}</b>
+            </div>
+            <div data-stat="fortnightly">
+              <span>Fortnightly</span>
+              <b>{formatMoney(summary.fortnightlyCents)}</b>
+            </div>
+            <div data-stat="annual">
+              <span>Annual</span>
+              <b>{formatMoney(summary.annualCents)}</b>
             </div>
           </div>
 
-          <div className="plan-table-card">
-            <div className="plan-table-head">
-              <h3>
-                All expenses <span className="plan-count">{rows.length}</span>
-              </h3>
-              <p>
-                Sorted by next due date. <strong>Paid</strong> rolls the date forward one cycle.
-              </p>
+          {selectedRows.length > 0 && (
+            <div className="plan-bulk-bar">
+              <span>
+                {selectedRows.length}{' '}
+                {selectedRows.length === 1 ? 'expense' : 'expenses'} selected
+              </span>
+              <div className="plan-bulk-actions">
+                <button
+                  type="button"
+                  className="plan-btn plan-btn-ghost"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="plan-btn plan-btn-danger"
+                  onClick={() => setConfirmBulk(true)}
+                >
+                  Delete selected
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="plan-list-tools">
+            <label className="plan-check plan-select-all">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                aria-label="Select all recurring expenses"
+              />
+              <span>Select all</span>
+            </label>
+          </div>
+
+          <div className="plan-expense-list">
+            <div className="plan-expense-head">
+              <span />
+              <span>Expense</span>
+              <span>Billed</span>
+              <span>Frequency</span>
+              <span>Starts</span>
+              <span className="plan-num">Weekly</span>
+              <span />
             </div>
 
-            <div className="plan-table-scroll">
-              <table className="plan-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Expense</th>
-                    <th scope="col" className="plan-num">
-                      Billed
-                    </th>
-                    <th scope="col">Frequency</th>
-                    <th scope="col">Next due</th>
-                    <th scope="col" className="plan-num">
-                      Weeks
-                    </th>
-                    <th scope="col" className="plan-num">
-                      Weekly set-aside
-                    </th>
-                    <th scope="col" className="plan-num">
-                      One-off catch-up
-                    </th>
-                    <th scope="col">
-                      <span className="plan-sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.rows.map((row) => (
-                    <tr key={row.id}>
-                      <td className="plan-name-cell" data-label="Expense">
-                        <DueDot days={row.daysUntilDue} />
-                        <span className="plan-name-text">{row.name}</span>
-                      </td>
-                      <td className="plan-num plan-billed" data-label="Billed">
-                        <span className="plan-sr-only">Billed: </span>
-                        {formatMoney(row.amountCents)}
-                      </td>
-                      <td data-label="Frequency">
-                        <span className="plan-sr-only">Frequency: </span>
-                        <span className="plan-freq">
-                          {FREQUENCY_SPECS[row.frequency].label}
-                        </span>
-                      </td>
-                      <td className="plan-due-cell" data-label="Next due">
-                        <span className="plan-due-value">
-                          <span className="plan-sr-only">Next due: </span>
-                          <span className="plan-due-date">
-                            {formatCalendarDate(row.nextDueDate)}
-                          </span>
-                          <span
-                            className={`plan-due-hint${row.daysUntilDue < 0 ? ' is-overdue' : ''}`}
-                          >
-                            {formatDueLabel(row.nextDueDate, today)}
-                          </span>
-                        </span>
-                      </td>
-                      <td className="plan-num plan-weeks" data-label="Weeks">
-                        <span className="plan-sr-only">Weeks until due: </span>
-                        {row.weeksUntilDue}
-                      </td>
-                      <td className="plan-num plan-strong" data-label="Weekly set-aside">
-                        <span className="plan-sr-only">Weekly set-aside: </span>
-                        {formatMoney(Math.round(row.weeklyCents))}
-                      </td>
-                      <td
-                        className={`plan-num${row.catchUpCents > 0 ? ' plan-catchup' : ' plan-zero'}`}
-                        data-label="One-off catch-up"
-                      >
-                        <span className="plan-sr-only">One-off catch-up: </span>
-                        {formatMoney(row.catchUpCents)}
-                      </td>
-                      <td className="plan-actions-cell">
-                        <div className="plan-row-actions">
-                          <button
-                            type="button"
-                            className="plan-row-btn"
-                            aria-label={`Mark ${row.name} as paid`}
-                            title="Advance the next due date by one cycle"
-                            onClick={() => handleMarkPaid(row)}
-                          >
-                            Paid
-                          </button>
-                          <button
-                            type="button"
-                            className="plan-row-btn"
-                            aria-label={`Edit ${row.name}`}
-                            onClick={() => setEditor({ mode: 'edit', row })}
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={5} className="plan-total-label">
-                      Total
-                    </td>
-                    <td className="plan-num plan-strong">{formatMoney(summary.weeklyCents)}</td>
-                    <td className="plan-num plan-catchup">
-                      {formatMoney(summary.catchUpCents)}
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            {rows.map((row) => {
+              const selected = selectedIds.has(row.id)
+              return (
+                <div
+                  className={`plan-expense-row${selected ? ' is-selected' : ''}`}
+                  key={row.id}
+                >
+                  <label className="plan-check">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleRow(row.id)}
+                      aria-label={`Select ${row.name}`}
+                    />
+                  </label>
+                  <div className="plan-expense-name">
+                    {row.name}
+                  </div>
+                  <div className="plan-expense-amount" data-label="Billed">
+                    {formatMoney(row.amountCents)}
+                  </div>
+                  <div data-label="Frequency">
+                    <span className="plan-freq">
+                      {FREQUENCY_SPECS[row.frequency].label}
+                    </span>
+                  </div>
+                  <div className="plan-expense-start" data-label="Starts">
+                    {formatCalendarDate(row.startDate)}
+                  </div>
+                  <div className="plan-expense-weekly" data-label="Weekly set-aside">
+                    {formatMoney(
+                      Math.round(weeklySetAsideCents(row.amountCents, row.frequency)),
+                    )}
+                  </div>
+                  <div className="plan-expense-actions">
+                    <button
+                      type="button"
+                      className="plan-row-btn"
+                      aria-label={`Edit ${row.name}`}
+                      onClick={() => setEditor({ mode: 'edit', row })}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           <footer className="plan-footer">
@@ -436,7 +409,6 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
           key={editor.mode === 'edit' ? editor.row.id : 'add'}
           open
           row={editor.mode === 'edit' ? editor.row : null}
-          today={today}
           onClose={() => setEditor(null)}
           onSave={handleSave}
           onDelete={handleDelete}
@@ -456,7 +428,7 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
         open={confirmClear}
         onOpenChange={setConfirmClear}
         title="Delete this plan?"
-        description="The expenses are removed from this browser only; your Up account is not touched."
+        description="The recurring expenses and their paid history are removed from this browser."
         footer={
           <div className="plan-modal-actions">
             <div className="plan-modal-actions-left" />
@@ -468,7 +440,11 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
               >
                 Cancel
               </button>
-              <button type="button" className="plan-btn plan-btn-danger" onClick={handleDeletePlan}>
+              <button
+                type="button"
+                className="plan-btn plan-btn-danger"
+                onClick={handleDeletePlan}
+              >
                 Delete plan
               </button>
             </div>
@@ -476,9 +452,43 @@ export function PlanView({ uid, onNotify, onBack }: PlanViewProps) {
         }
       >
         <p className="plan-confirm-copy">
-          This removes all {rows.length} {rows.length === 1 ? 'expense' : 'expenses'} from
-          this browser. Existing weekly budgets keep their saved entries. Export a CSV first
-          if you want to keep a copy.
+          This removes{' '}
+          {rows.length === 1 ? 'this expense' : `all ${rows.length} expenses`} and{' '}
+          {rows.length === 1 ? 'its' : 'their'} paid history from this browser. Export a
+          CSV first if you want to keep a copy.
+        </p>
+      </PlanModal>
+
+      <PlanModal
+        open={confirmBulk}
+        onOpenChange={setConfirmBulk}
+        title={`Delete ${selectedRows.length} ${selectedRows.length === 1 ? 'expense' : 'expenses'}?`}
+        description="This cannot be undone. Their paid history will be removed too."
+        footer={
+          <div className="plan-modal-actions">
+            <div className="plan-modal-actions-left" />
+            <div className="plan-modal-actions-right">
+              <button
+                type="button"
+                className="plan-btn plan-btn-ghost"
+                onClick={() => setConfirmBulk(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="plan-btn plan-btn-danger"
+                onClick={handleBulkDelete}
+              >
+                Delete selected
+              </button>
+            </div>
+          </div>
+        }
+      >
+        <p className="plan-confirm-copy">
+          {selectedRows.map((row) => row.name).join(', ')} will no longer appear in any
+          week.
         </p>
       </PlanModal>
     </section>

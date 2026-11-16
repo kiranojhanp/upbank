@@ -120,7 +120,19 @@ const OLDER_COFFEE = {
   relationships: { category: { data: { id: 'cat-eating' } } },
 }
 
-const FIRST_PAGE = [COFFEE, GROCERIES, SALARY, PENDING, FORMULA]
+const INTERNET_PAYMENT = {
+  id: 'tx-internet',
+  type: 'transactions',
+  attributes: {
+    description: 'Internet payment',
+    createdAt: '2026-11-27T09:00:00Z',
+    settledAt: '2026-11-27T09:00:01Z',
+    status: 'SETTLED',
+    amount: { value: '-75.00', currencyCode: 'AUD', valueInBaseUnits: -7500 },
+  },
+}
+
+const FIRST_PAGE = [COFFEE, GROCERIES, SALARY, PENDING, FORMULA, INTERNET_PAYMENT]
 const SECOND_PAGE = [OLDER_COFFEE]
 
 const NEXT_PAGE_URL =
