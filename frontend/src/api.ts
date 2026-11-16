@@ -90,6 +90,24 @@ export const api = {
   },
 
   /**
+   * Every transaction in a date window for one account, following Up's cursor
+   * to completion. The week view asks each account for its Wednesday–Tuesday
+   * slice; page size 100 keeps a normal week to one request per account.
+   */
+  async allTransactions(
+    accountId: string,
+    filters: { since?: string; until?: string },
+  ): Promise<Transaction[]> {
+    const params: Record<string, string> = { 'page[size]': '100' }
+    if (filters.since) params['filter[since]'] = filters.since
+    if (filters.until) params['filter[until]'] = filters.until
+    return fetchAllPages<Transaction>(
+      `${UP_API_BASE_URL}/accounts/${encodeURIComponent(accountId)}/transactions`,
+      params,
+    )
+  },
+
+  /**
    * Fetch the page immediately older than `until`. Used only when a cursor was
    * restored from cache and may point into a list that has shifted since.
    */

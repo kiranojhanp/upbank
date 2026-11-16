@@ -14,8 +14,11 @@ import type { Account, TransactionFilters } from '../types'
 import { forgetUserData } from '../persistence'
 import type { TransactionsSeed } from '../pagination'
 import { useDocumentVisible, useOnlineStatus } from '../useOnlineStatus'
+import { downloadBlob } from '../download'
 import { AccountCard, SidebarBrand } from './AccountCard'
 import { Filters } from './Filters'
+import { PlanView } from './PlanView'
+import { WeekView } from './WeekView'
 import { Toasts, type ToastItem } from './Toasts'
 import { TransactionsView, type TransactionsHandle } from './TransactionsView'
 
@@ -39,17 +42,6 @@ const READY_FALLBACK_MS = 1500
 // the tab is visible. It refreshes accounts only, so it never collapses a
 // transaction list the user has paged through.
 const POLL_INTERVAL_MS = 60_000
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-}
 
 function EyeOpenIcon() {
   return (
@@ -91,6 +83,7 @@ function EyeClosedIcon() {
 }
 
 export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: DashboardProps) {
+  const [view, setView] = useState<'accounts' | 'week' | 'plan'>('week')
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [draftFilters, setDraftFilters] = useState<TransactionFilters>({})
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
@@ -272,6 +265,7 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     setSelectedAccountId(account.id)
     setRevealedAccountId(account.id)
     setSidebarOpen(false)
+    setView('accounts')
   }
 
   function handleApplyFilters() {
@@ -365,6 +359,55 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
         <aside className="sidebar">
           <SidebarBrand />
 
+          <nav className="sidebar-nav" aria-label="Views">
+            <button
+              type="button"
+              className={`sidebar-nav-btn${view === 'accounts' ? ' is-active' : ''}`}
+              aria-current={view === 'accounts' ? 'page' : undefined}
+              onClick={() => {
+                setView('accounts')
+                setSidebarOpen(false)
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <path d="M2 10h20" />
+              </svg>
+              Accounts
+            </button>
+            <button
+              type="button"
+              className={`sidebar-nav-btn${view === 'week' || view === 'plan' ? ' is-active' : ''}`}
+              aria-current={view === 'week' || view === 'plan' ? 'page' : undefined}
+              onClick={() => {
+                setView('week')
+                setSidebarOpen(false)
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="3" y="5" width="18" height="16" rx="2" />
+                <path d="M16 3v4M8 3v4M3 11h18" />
+              </svg>
+              Week
+            </button>
+          </nav>
+
           <div className="sidebar-scroll">
             <div className="sidebar-label-row">
               <span className="sidebar-label">Accounts</span>
@@ -430,52 +473,67 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
         </aside>
 
         <main>
-          {!selectedAccount && (
-            <div id="empty-state" className="empty-state">
-              <p className="empty-eyebrow">Up Web</p>
-              <p className="empty-headline">
-                Select an account
-                <br /> to view <em>transactions</em>
-              </p>
-            </div>
-          )}
-
-          {selectedAccount && (
-            <section id="transactions-section">
-              <Filters
-                title={selectedAccount.attributes.displayName}
-                value={draftFilters}
-                onChange={setDraftFilters}
-                onApply={handleApplyFilters}
-                onClear={handleClearFilters}
-                onExport={handleExportCsv}
-                exporting={exporting}
-              />
-
-              {canMountTransactions && transactionsEntry && transactionsCollection ? (
-                <TransactionsView
-                  key={`${transactionsEntry.id}:${seed ? 'seed' : 'empty'}`}
-                  ref={transactionsRef}
-                  uid={uid}
-                  cacheKey={transactionsEntry.id}
-                  accountId={selectedAccount.id}
-                  filters={appliedFilters}
-                  collection={transactionsCollection}
-                  seed={seed}
-                  online={online}
-                  isJoint={Boolean(isJoint)}
-                  onSessionExpired={onSessionExpired}
-                  onNotify={addToast}
-                />
-              ) : (
-                <p className="loading-text">Loading…</p>
+          {view === 'plan' ? (
+            <PlanView key={uid} uid={uid} onNotify={addToast} onBack={() => setView('week')} />
+          ) : view === 'week' ? (
+            <WeekView
+              uid={uid}
+              accounts={accounts ?? []}
+              online={online}
+              onNotify={addToast}
+              onOpenPlan={() => setView('plan')}
+              onSessionExpired={onSessionExpired}
+            />
+          ) : (
+            <>
+              {!selectedAccount && (
+                <div id="empty-state" className="empty-state">
+                  <p className="empty-eyebrow">Up Web</p>
+                  <p className="empty-headline">
+                    Select an account
+                    <br /> to view <em>transactions</em>
+                  </p>
+                </div>
               )}
-            </section>
+
+              {selectedAccount && (
+                <section id="transactions-section">
+                  <Filters
+                    title={selectedAccount.attributes.displayName}
+                    value={draftFilters}
+                    onChange={setDraftFilters}
+                    onApply={handleApplyFilters}
+                    onClear={handleClearFilters}
+                    onExport={handleExportCsv}
+                    exporting={exporting}
+                  />
+
+                  {canMountTransactions && transactionsEntry && transactionsCollection ? (
+                    <TransactionsView
+                      key={`${transactionsEntry.id}:${seed ? 'seed' : 'empty'}`}
+                      ref={transactionsRef}
+                      uid={uid}
+                      cacheKey={transactionsEntry.id}
+                      accountId={selectedAccount.id}
+                      filters={appliedFilters}
+                      collection={transactionsCollection}
+                      seed={seed}
+                      online={online}
+                      isJoint={Boolean(isJoint)}
+                      onSessionExpired={onSessionExpired}
+                      onNotify={addToast}
+                    />
+                  ) : (
+                    <p className="loading-text">Loading…</p>
+                  )}
+                </section>
+              )}
+            </>
           )}
         </main>
       </div>
 
-      <button id="accounts-fab" aria-label="Open accounts" onClick={() => setSidebarOpen(true)}>
+      <button id="accounts-fab" aria-label="Open menu" onClick={() => setSidebarOpen(true)}>
         <svg
           viewBox="0 0 24 24"
           fill="none"
@@ -484,10 +542,9 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-          <line x1="1" y1="10" x2="23" y2="10" />
+          <path d="M4 6h16M4 12h16M4 18h16" />
         </svg>
-        Accounts
+        Menu
       </button>
 
       <Toasts items={toasts} onDismiss={dismissToast} />

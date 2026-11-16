@@ -229,11 +229,24 @@ export class MockUpApi {
 
   private async handleTransactions(route: Route, url: URL): Promise<void> {
     const after = url.searchParams.get('page[after]')
+    const since = url.searchParams.get('filter[since]')
     const until = url.searchParams.get('filter[until]')
     const status = url.searchParams.get('filter[status]')
+    const allPages = url.searchParams.get('page[size]') === '100'
 
     if (this.failNextPage && (after || until)) {
       await this.fulfillError(route, 500, 'The next page is unavailable')
+      return
+    }
+
+    // The week view asks for a date-windowed page of up to 100 per account.
+    // Filter the fixture by local-ish date so it behaves like Up's window.
+    if (allPages && (since || until)) {
+      const windowed = [...FIRST_PAGE, ...SECOND_PAGE].filter((tx) => {
+        const day = tx.attributes.createdAt.slice(0, 10)
+        return (!since || day >= since) && (!until || day < until)
+      })
+      await this.fulfill(route, 200, list(windowed))
       return
     }
 

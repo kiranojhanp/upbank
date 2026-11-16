@@ -1,8 +1,14 @@
 # Unofficial Up — React SPA
 
-An unofficial web app for viewing Up Banking accounts, balances and transactions. It is a
-**static, frontend-only** React single-page app: the browser talks to the Up API directly
-and caches what it fetches on the device. There is no server to run.
+An unofficial web app for viewing Up Banking accounts, balances and transactions, plus a
+weekly budgeting workspace. It is a **static, frontend-only** React single-page app: the
+browser talks to the Up API directly and caches what it fetches on the device. There is no
+server to run.
+
+The budgeting side opens on the current **Wednesday–Tuesday** week. Budget entries are
+seeded from a recurring set-aside plan, actual Up transactions are attached to the selected
+entry by clicking them, and the week shows what is planned, spent, left and still
+unassigned.
 
 > Not affiliated with Up. Your personal access token can read and categorise your banking
 > data — use at your own risk, ideally with a short-lived token.
@@ -19,6 +25,13 @@ and caches what it fetches on the device. There is no server to run.
 ## Features
 
 - Sign in with your Up Banking Personal Access Token
+- Weekly budget (the home view): a Wednesday–Tuesday calendar with previous/next week,
+  planned/spent/left/unassigned totals, an editable entry list seeded from the recurring
+  plan, and a detail pane where clicking a real Up transaction attaches it to the selected
+  entry (entries and links are local; transaction details are read live for the week)
+- Set-aside plan (the template): local-first recurring bills and spending lines using the
+  sheet's weekly set-aside, one-off catch-up, fortnightly pay split and annual total, with
+  weeks-until-due, a "mark paid" date roller, and Google Sheets/CSV import and export
 - View all account balances (including 2Up joint accounts)
 - Click an account to view transactions grouped by date
 - Filter transactions by status (settled/pending) and date range
@@ -69,6 +82,8 @@ infinite query and mirrored into a local-only TanStack DB collection:
 | `accounts` | account id | Up `GET /accounts` |
 | transaction pages | `['transactions', account, status, since, until]` | Up `GET /accounts/{id}/transactions` |
 | `transactions:<account>:<filters>` | transaction id | local-only row mirror of the pages above |
+| set-aside plan | `up:plan:<uid>` in `localStorage` | user-authored: pasted from Sheets or added in the app |
+| weekly budget | `up:week:<uid>` in `localStorage` | user-authored entries + transaction-id → entry-id links |
 
 - `useInfiniteQuery` owns the cursor sequence, `hasNextPage`, page freshness, retry and
   refetching. `getNextPageParam` follows Up's cursor for a fresh sequence.
@@ -86,6 +101,59 @@ infinite query and mirrored into a local-only TanStack DB collection:
 - A new `DbClient` + `QueryClient` is created per signed-in session. Ending the session
   (sign out, a rejected token, or a 401/403) drops the whole store and wipes its rows,
   rather than scrubbing rows from a client that still has query observers attached.
+
+### Weekly budgets
+
+The home view is the current Wednesday–Tuesday week. Its entries are derived live from the
+recurring plan: one entry per plan row, with the row's weekly set-aside as the planned
+amount. The first edit, added entry or transaction attachment materialises that week in
+`up:week:<uid>`, so later plan changes do not rewrite a week that has already been worked
+on. Entries can be renamed, re-budgeted or deleted for that week without touching the plan.
+
+The detail pane fetches the week's **debit** transactions across every Up account, then:
+
+- shows the transactions attached to the selected entry, with an `×` to detach;
+- shows the rest of the week's spending; clicking one attaches it to the selected entry, or
+  moves it from another entry;
+- counts spending that is not attached anywhere as **unassigned**, and includes it in the
+  week's left-over figure.
+
+Only the transaction-id → entry-id links are persisted. Descriptions, amounts and account
+names are fetched for the active week and are never written into the week record, so this
+view does not create another copy of banking data at rest. Offline, entries and links remain
+visible but transaction details wait for a connection. Up to two years of weekly records are
+kept, pruned on write.
+
+### The set-aside plan
+
+The plan is the recurring template behind those weeks. Bills are authored by the person
+using the app rather than fetched from Up, so they live in one small versioned
+`localStorage` record per token fingerprint (`up:plan:<uid>`), not in an OPFS collection.
+It has its own **Delete plan** action, and the render-error recovery path removes all `up:`
+keys.
+
+The maths is a direct port of the sheet, with the same rounding:
+
+```
+weekly set-aside = billed amount × (payments per year ÷ 52)
+weeks until due  = max(0, floor((due date − today) ÷ 7))
+one-off catch-up = max(0, round(amount − (weekly set-aside × weeks), 2))
+```
+
+Weekly, fortnightly, monthly, quarterly, biannual and annual bills use 52, 26, 12, 4, 2 and
+1 payments a year. The weekly target is the sum of the unrounded per-bill figures, the
+fortnightly split is twice that, and the annual total is the exact sum of each bill's
+yearly cost, so the four headline numbers match the sheet to the cent. Dates are stored as
+`YYYY-MM-DD` and compared at UTC midnight, so a daylight-saving change cannot make a bill
+look a day early. A month-end due date clamps (31 Jan → 28/29 Feb) when "mark paid" rolls
+it forward.
+
+Import accepts rows copied from Google Sheets (tab-separated) or a CSV export. It finds a
+header anywhere in the first ten rows, maps name/amount/frequency/due by column name, and
+ignores the sheet's calculated columns. Dates can be ISO, Australian (`19/11/2026`) or
+written (`19 Nov 2026`). Invalid rows are reported by row number and skipped rather than
+silently imported. Export writes the same seven columns as the sheet, including the
+computed values, with the transaction export's spreadsheet-formula guard applied to names.
 
 ### The local cache (OPFS SQLite)
 
@@ -207,6 +275,12 @@ Residual risks that cannot be fixed from inside a static SPA:
   the previous token fingerprint instead of leaving an orphaned copy.
 - Sign-out clears the token, wipes the OPFS database (including sidecars) and removes the
   cached cursor/category metadata.
+- The set-aside plan (`up:plan:<uid>`) and weekly budgets (`up:week:<uid>`) survive
+  sign-out. They hold user-authored budgets and transaction-id → entry-id links only, not
+  descriptions, amounts or other transaction content, and are namespaced by the same token
+  fingerprint. Remove them with **Delete plan**, by deleting entries, or via the render-error
+  reset. Both are stored unencrypted like the rest of the cache, so the browser profile
+  remains the only protection.
 - A 401/403, or a token rejected at boot, does the same wipe. A dead token can never
   authenticate again, so retaining its rows would only leave data at rest.
 - A `storage` event for the token key reloads other tabs. Signing out (or switching
@@ -235,6 +309,9 @@ Residual risks that cannot be fixed from inside a static SPA:
   bearer token to another origin.
 - Persisted envelope metadata (cursor, category names, row count) is revalidated as
   untrusted input and rebuilt into a null-prototype map before use.
+- Stored weekly budgets are validated entry by entry; a transaction link is only kept when
+  it points at an entry in the same week, and no transaction description or amount is written
+  to that record.
 - CSV exports neutralise spreadsheet formula triggers (`=`, `+`, `-`, `@`, tab, CR/LF, even
   after leading whitespace or a BOM), escape quotes/commas/newlines, and only treat a
   strict decimal amount as numeric. Filenames are reduced to letters, digits, spaces, `_`
@@ -323,7 +400,7 @@ frontend/
     fixtures.ts          Per-test Up API mock + app page object
     pages/AppPage.ts     Role-based app page object
     support/up-api.ts    Stateful fake of the Up API
-    specs/               auth, transactions, offline/PWA, security, responsive
+    specs/               auth, transactions, weekly budget, offline/PWA, security, responsive
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
     manifest.webmanifest Web app manifest
@@ -332,13 +409,15 @@ frontend/
   scripts/
     db-smoke.mjs         Data-layer test against the real TanStack DB packages
     csv-check.ts         CSV columns, escaping and formula-injection guard
+    budget-check.ts      Plan formula parity, date handling, import and validation
+    week-check.ts        Wed–Tue maths, seeded entries, attachment totals, week validation
     persistence-smoke.ts Cache fallback when OPFS is unavailable
     security-check.ts    Token input validation
     pagination-check.ts  Cursor anchoring, dedupe and exhausted-cache behaviour
     render-smoke.mjs     Renders the production bundle in happy-dom against a fake Up API
                           and asserts CSP/header/token-clearing/401 behaviour
   src/
-    App.tsx              Boot probe, per-session store, view switching
+    App.tsx              Boot probe and per-session store
     auth.ts              Token storage, cache fingerprint, verify window
     api.ts               Facade the UI and collections call
     up.ts                Direct Up API client (fetch, errors, pagination)
@@ -346,6 +425,13 @@ frontend/
     db.ts                TanStack DB client, descriptors, persistence, fetch gating
     persistence.ts       OPFS SQLite cache: open, dispose, wipe, forget a user
     envelopeStore.ts     Cursor, category map, oldest timestamp and cache TTL
+    budget.ts            Plan maths, date/frequency handling and Sheets/CSV import/export
+    planStore.ts         Per-user set-aside plan in localStorage (validation, write, clear)
+    week.ts              Wed–Tue helpers, seeded entries, attachment summaries
+    weekStore.ts         Per-user weekly budgets and transaction links in localStorage
+    useWeekTransactions.ts  Week-window transaction query across all accounts
+    useToday.ts          Local date, refreshed across midnight for week and due dates
+    download.ts          Blob download helper shared by the CSV exports
     pagination.ts        Pure page-param/dedupe helpers for the infinite query
     useTransactionsInfinite.ts  TanStack Query infinite transaction source
     security.ts          Secure-context, frame and token-input checks
@@ -357,11 +443,18 @@ frontend/
     components/
       ui/                shadcn/ui components, generated by the CLI
       Login.tsx
-      Dashboard.tsx
+      Dashboard.tsx      Shell, Accounts/Week switching, refresh and sync
       AccountCard.tsx
       TransactionItem.tsx
       DetailPanel.tsx
       Filters.tsx
+      WeekView.tsx        Wed–Tue calendar, week navigation and summaries
+      WeekBoard.tsx       Entry list, selected-entry detail and transaction attachment
+      WeekEntryDialog.tsx Add/edit/remove a week's budget entry
+      PlanView.tsx        Recurring set-aside plan (template) and plan actions
+      PlanFormDialog.tsx  Add/edit an expense with live set-aside preview
+      PlanImportDialog.tsx Paste/CSV import with row-level validation
+      PlanModal.tsx       Radix dialog shell themed for the app
       TransactionsView.tsx Infinite query, row mirror, load-more and detail panel
       ErrorBoundary.tsx   Render-error recovery and local-data reset
       Toasts.tsx
@@ -416,6 +509,8 @@ npm run build
 
 npm run test:db          # collections, select, orderBy, pagination, teardown
 npm run test:csv         # CSV columns, escaping, formula-injection guard
+npm run test:budget      # Sheet formula parity, dates, import parsing, plan validation
+npm run test:week        # Wed–Tue weeks, seeded entries, attachment totals, week validation
 npm run test:security    # token input validation and control-character rejection
 npm run test:pagination  # cursor anchoring, dedupe, exhausted restored cache
 npm run test:persistence # cache fallback, envelope TTL/validation, forget a user
@@ -443,7 +538,9 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | `transactions.spec.ts` | balances, filters, cursor pagination, refresh preserving pages, detail panel, CSV download/formula guard, error toasts |
 | `offline.spec.ts` | service worker + OPFS restore on a cold offline reload, then `filter[until]` load-more anchoring |
 | `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
-| `resilience.spec.ts` | empty account state and the mobile account drawer |
+| `resilience.spec.ts` | empty account state and the mobile navigation drawer |
+| `plan.spec.ts` | recurring plan maths, add/edit/delete, import/export, mark paid, mobile access |
+| `week.spec.ts` | Wed–Tue week, entry edits, attach/move transactions, totals, persistence, narrow layout |
 
 The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel
 with isolated browser contexts (so OPFS and localStorage do not leak between tests),
