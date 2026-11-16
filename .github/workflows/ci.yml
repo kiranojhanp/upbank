@@ -40,6 +40,8 @@ jobs:
         run: |
           npm run test:db
           npm run test:csv
+          npm run test:budget
+          npm run test:week
           npm run test:security
           npm run test:pagination
           npm run test:persistence

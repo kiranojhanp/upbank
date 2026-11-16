@@ -101,6 +101,98 @@ export class AppPage {
     return download
   }
 
+  async dismissToasts(): Promise<void> {
+    const toasts = this.page.locator('#toast-container .toast')
+    for (let guard = 0; guard < 10 && (await toasts.count()) > 0; guard += 1) {
+      await toasts.first().click({ force: true })
+    }
+  }
+
+  async openWeek(): Promise<void> {
+    await this.page.getByRole('button', { name: 'Week', exact: true }).click()
+    await expect(this.page.locator('#week-section')).toBeVisible()
+  }
+
+  async openPlan(): Promise<void> {
+    await this.page.getByRole('button', { name: 'Week', exact: true }).click()
+    await this.page.getByRole('button', { name: 'Set-aside plan', exact: true }).click()
+    await expect(this.page.getByRole('heading', { name: 'Set-aside plan' })).toBeVisible()
+  }
+
+  weekEntry(name: string): Locator {
+    return this.page.locator('.week-entry').filter({ hasText: name })
+  }
+
+  weekStat(stat: 'planned' | 'left' | 'unassigned'): Locator {
+    return this.page.locator(`[data-week-stat="${stat}"]`)
+  }
+
+  weekTransaction(description: string): Locator {
+    const escaped = description.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return this.page.locator('.week-tx-button').filter({
+      has: this.page.locator('.week-tx-desc', {
+        hasText: new RegExp(`^${escaped}$`),
+      }),
+    })
+  }
+
+  async addWeekEntry(entry: { name: string; amount: string }): Promise<void> {
+    await this.page.getByRole('button', { name: 'Add budget entry' }).click()
+    const dialog = this.page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByLabel('Entry name').fill(entry.name)
+    await dialog.getByLabel('Planned for this week').fill(entry.amount)
+    await dialog.getByRole('button', { name: 'Add entry' }).click()
+    await expect(dialog).toHaveCount(0)
+  }
+
+  /** Pin the browser clock so weeks-until-due is deterministic. */
+  async freezeToday(iso = '2026-11-16T02:00:00.000Z'): Promise<void> {
+    await this.page.clock.setFixedTime(new Date(iso))
+  }
+
+  planStat(stat: 'weekly' | 'seed' | 'fortnightly' | 'annual'): Locator {
+    return this.page.locator(`[data-stat="${stat}"]`)
+  }
+
+  planRow(name: string): Locator {
+    return this.page.locator('.plan-table tbody tr').filter({ hasText: name })
+  }
+
+  async addExpense(expense: {
+    name: string
+    amount: string
+    frequency: 'WEEKLY' | 'FORTNIGHTLY' | 'MONTHLY' | 'QUARTERLY' | 'BIANNUALLY' | 'ANNUALLY'
+    due: string
+  }): Promise<void> {
+    await this.page.getByRole('button', { name: 'Add expense', exact: true }).click()
+    const dialog = this.page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByLabel('Expense name').fill(expense.name)
+    await dialog.getByLabel('Billed amount').fill(expense.amount)
+    await dialog.getByLabel('Frequency').selectOption(expense.frequency)
+    await dialog.getByLabel('Next due date').fill(expense.due)
+    await dialog.getByRole('button', { name: 'Add expense' }).click()
+    await expect(dialog).toHaveCount(0)
+  }
+
+  async importPlan(text: string, mode?: 'append' | 'replace'): Promise<void> {
+    await this.page.getByRole('button', { name: 'Import', exact: true }).click()
+    const dialog = this.page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByLabel('Paste expenses').fill(text)
+    if (mode === 'append') await dialog.getByLabel('Add to plan').check()
+    if (mode === 'replace') await dialog.getByLabel('Replace plan').check()
+    await dialog.getByRole('button', { name: /^Import \d+ expense/ }).click()
+    await expect(dialog).toHaveCount(0)
+  }
+
+  async exportPlanCsv(): Promise<Download> {
+    const download = this.page.waitForEvent('download')
+    await this.page.getByRole('button', { name: 'Export CSV' }).click()
+    return download
+  }
+
   async expectOfflineNote(): Promise<void> {
     await expect(
       this.page.getByText('Offline — showing saved transactions.'),

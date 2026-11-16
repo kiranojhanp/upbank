@@ -17,7 +17,7 @@ test.describe('resilience and responsive layout', () => {
       await app.login()
       await app.expectDashboard()
 
-      await page.getByRole('button', { name: 'Open accounts' }).click()
+      await page.getByRole('button', { name: 'Open menu' }).click()
       await app.selectAccount()
       await app.expectTransaction('Coffee')
     })
