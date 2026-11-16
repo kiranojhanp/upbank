@@ -33,6 +33,9 @@ appears in its own week.
   one-off catch-up, fortnightly split and annual total; add, edit, bulk-select and delete,
   or import/export Google Sheets/CSV. Legacy "Next Due Date" sheets are accepted as start
   dates
+- Backup & restore: download a versioned JSON file with the recurring plan and paid
+  history, then import it in another browser. The Up token is never included; the
+  re-fetchable account/transaction cache is not included either
 - View all account balances (including 2Up joint accounts)
 - Click an account to view transactions grouped by date
 - Filter transactions by status (settled/pending) and date range
@@ -158,6 +161,20 @@ accepted as the start date. Dates can be ISO, Australian (`19/11/2026`) or writt
 (`19 Nov 2026`). Invalid rows are reported by row number and skipped rather than silently
 imported. Export writes name, amount, frequency, start date and weekly set-aside, with the
 transaction export's spreadsheet-formula guard applied to names.
+
+### Backup and cross-browser migration
+
+The plan and paid history are per-origin `localStorage`, so Firefox and Chrome do not
+share them. **Backup data** in the sidebar downloads `unofficial-up-backup-YYYY-MM-DD.json`
+containing the recurring plan and the paid occurrences. It deliberately excludes
+`up:token` and the OPFS account/transaction cache; sign in with the same Up token in the
+other browser and import the file.
+
+Import replaces the current plan and paid history for the signed-in fingerprint, drops
+paid records whose expense is not in the backup, reports any invalid rows, then reloads the
+app. The file is versioned and can be restored later from the same dialog. It contains
+budget names/amounts and paid transaction ids — not transaction descriptions or amounts —
+so treat the downloaded file as sensitive.
 
 ### The local cache (OPFS SQLite)
 
@@ -316,6 +333,9 @@ Residual risks that cannot be fixed from inside a static SPA:
 - Stored paid occurrences are validated record by record: the key must match the expense id
   and occurrence date, and only a transaction id is kept — no description, amount or account
   name is written to that record.
+- The optional backup file is created only when the user downloads it. It includes the
+  plan's names/amounts and paid transaction ids, but not the token or transaction content;
+  importing it replaces the local plan and paid records. Store it accordingly.
 - CSV exports neutralise spreadsheet formula triggers (`=`, `+`, `-`, `@`, tab, CR/LF, even
   after leading whitespace or a BOM), escape quotes/commas/newlines, and only treat a
   strict decimal amount as numeric. Filenames are reduced to letters, digits, spaces, `_`
@@ -404,7 +424,7 @@ frontend/
     fixtures.ts          Per-test Up API mock + app page object
     pages/AppPage.ts     Role-based app page object
     support/up-api.ts    Stateful fake of the Up API
-    specs/               auth, transactions, weekly recurring expenses, offline/PWA, security, responsive
+    specs/               auth, transactions, weekly recurring expenses, backup, offline/PWA, security, responsive
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
     manifest.webmanifest Web app manifest
@@ -415,6 +435,7 @@ frontend/
     csv-check.ts         CSV columns, escaping and formula-injection guard
     budget-check.ts      Plan formula parity, date handling, import and validation
     week-check.ts        Wed–Tue maths, start-date occurrences, due/paid totals, paid validation
+    backup-check.ts      Backup round-trip, validation and exclusion of token/content
     persistence-smoke.ts Cache fallback when OPFS is unavailable
     security-check.ts    Token input validation
     pagination-check.ts  Cursor anchoring, dedupe and exhausted-cache behaviour
@@ -433,6 +454,7 @@ frontend/
     planStore.ts         Per-user set-aside plan in localStorage (validation, write, clear)
     week.ts              Wed–Tue helpers, start-date occurrences, due/paid summary
     paidStore.ts         Paid occurrence records (expense/date → transaction id)
+    backup.ts            Versioned plan + paid-history JSON export/import and validation
     useWeekTransactions.ts  Week-window debit transaction query across all accounts
     useToday.ts          Local date, refreshed across midnight for week and due dates
     download.ts          Blob download helper shared by the CSV exports
@@ -459,6 +481,7 @@ frontend/
       PlanFormDialog.tsx  Add/edit an expense with start date and weekly preview
       PlanImportDialog.tsx Paste/CSV import with row-level validation
       PlanModal.tsx       Radix dialog shell themed for the app
+      BackupDialog.tsx    Download and restore the plan/paid-history backup
       TransactionsView.tsx Infinite query, row mirror, load-more and detail panel
       ErrorBoundary.tsx   Render-error recovery and local-data reset
       Toasts.tsx
@@ -515,6 +538,7 @@ npm run test:db          # collections, select, orderBy, pagination, teardown
 npm run test:csv         # CSV columns, escaping, formula-injection guard
 npm run test:budget      # Sheet formula parity, dates, import parsing, plan validation
 npm run test:week        # Wed–Tue weeks, start-date occurrences, due/paid totals, paid validation
+npm run test:backup      # backup round-trip, validation, no token or transaction content
 npm run test:security    # token input validation and control-character rejection
 npm run test:pagination  # cursor anchoring, dedupe, exhausted restored cache
 npm run test:persistence # cache fallback, envelope TTL/validation, forget a user
@@ -545,6 +569,7 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | `resilience.spec.ts` | empty account state and the mobile navigation drawer |
 | `plan.spec.ts` | recurring plan maths, start dates, bulk delete, import/export, mobile access |
 | `week.spec.ts` | due occurrences, transaction picker, paid hiding, next-week recurrence, persistence, narrow layout |
+| `backup.spec.ts` | export plan/paid without the token, clear local state, restore in a fresh session |
 
 The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel
 with isolated browser contexts (so OPFS and localStorage do not leak between tests),

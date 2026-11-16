@@ -127,6 +127,11 @@ export function markPaid(
   return writeFile(uid, paid)
 }
 
+/** Replace all paid occurrences, e.g. when restoring a backup. */
+export function replacePaid(uid: string, paid: PaidMap): boolean {
+  return writeFile(uid, paid)
+}
+
 /** Remove the paid records belonging to deleted expenses. */
 export function forgetPaidForExpenses(uid: string, expenseIds: string[]): boolean {
   if (expenseIds.length === 0) return true

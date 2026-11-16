@@ -13,6 +13,7 @@
     "test:csv": "vite build --ssr scripts/csv-check.ts --outDir .csv-check --emptyOutDir >/dev/null && node .csv-check/csv-check.js && rm -rf .csv-check",
     "test:budget": "vite build --ssr scripts/budget-check.ts --outDir .budget-check --emptyOutDir >/dev/null && node .budget-check/budget-check.js && rm -rf .budget-check",
     "test:week": "vite build --ssr scripts/week-check.ts --outDir .week-check --emptyOutDir >/dev/null && node .week-check/week-check.js && rm -rf .week-check",
+    "test:backup": "vite build --ssr scripts/backup-check.ts --outDir .backup-check --emptyOutDir >/dev/null && node .backup-check/backup-check.js && rm -rf .backup-check",
     "test:security": "vite build --ssr scripts/security-check.ts --outDir .security-check --emptyOutDir >/dev/null && node .security-check/security-check.js && rm -rf .security-check",
     "test:pagination": "vite build --ssr scripts/pagination-check.ts --outDir .pagination-check --emptyOutDir >/dev/null && node .pagination-check/pagination-check.js && rm -rf .pagination-check",
     "test:persistence": "vite build --ssr scripts/persistence-smoke.ts --outDir .persistence-smoke --emptyOutDir >/dev/null && node .persistence-smoke/persistence-smoke.js && rm -rf .persistence-smoke",
