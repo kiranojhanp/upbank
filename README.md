@@ -46,8 +46,9 @@ which is why requests use `credentials: 'omit'`.
 
 With no server session, the personal access token is stored in `localStorage`
 (`auth.ts`) and attached to every request. This is a deliberate trade-off: any script on
-the origin could read it, so the app ships a strict CSP and loads no third-party code.
-Generate a short-lived token in the Up app to bound the exposure.
+the origin could read it, so the app ships a strict CSP, loads no third-party code, and
+refuses to boot on an insecure origin. Generate a short-lived token in the Up app to
+bound the exposure; see [Security](#security) for the full model.
 
 ### No real-time webhooks
 
@@ -73,8 +74,8 @@ Collections are the source of truth for rendering; components never hold copies 
 - "Load more" appends rows with `utils.writeUpsert`. A refetch replaces the collection
   with page 1, which is why the cursor resets whenever the envelope changes.
 - A new `DbClient` + `QueryClient` is created per signed-in session. Ending the session
-  (sign out or 401) drops the whole store rather than scrubbing rows from a client that
-  still has query observers attached.
+  (sign out, a rejected token, or a 401/403) drops the whole store and wipes its rows,
+  rather than scrubbing rows from a client that still has query observers attached.
 
 ### The local cache (OPFS SQLite)
 
@@ -91,8 +92,11 @@ immediately.
   passed a probe against Up. The probe re-checks the token at most once per 6 hours, so
   page loads do not always cost an Up request, and a revoked token signs out before cached
   rows can render.
-- **Wiped on sign out.** "Sign out" closes SQLite and deletes the database files. A 401
-  during a session keeps the cache, because the next login is still authenticated.
+- **Wiped on sign out.** "Sign out" clears the token, closes SQLite and deletes the
+  database files (including `-journal`, `-wal` and `-shm` sidecars) plus the cached
+  cursor/category metadata. A 401/403, or a token Up rejects at boot, triggers the same
+  wipe: a dead token can never authenticate again, so keeping its rows would only leave
+  banking data at rest.
 - **Degrades cleanly.** Without OPFS (happy-dom in tests, Safari private mode, old
   browsers) `openLocalCache` returns null and the store is in-memory only.
 
@@ -149,17 +153,101 @@ background writes.
 
 ## Security
 
-Local-first is a latency and resilience architecture, not a security control: any XSS can
-read an in-memory store, and any at-rest store is readable by whoever has the browser
-profile. The security properties come from separate controls:
+Local-first is a latency and resilience architecture, not a security control. This app has
+no server to breach, but the browser profile becomes the only place the token and cached
+banking data live, so the controls below concentrate on protecting that profile, the
+credential, and the origin.
 
-- **Strict CSP** — injected into `index.html` at build time by `vite.config.ts`:
-  `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `worker-src 'self'`,
-  `connect-src 'self' https://api.up.com.au`, no inline scripts, no third-party origins.
-  Fonts are self-hosted for this reason.
-- **No third-party code** — the app ships its own bundle, fonts and assets.
-- **`referrer: no-referrer`** via a meta tag.
-- **Local rows are scoped to the user and removed on sign out.**
+In scope: XSS on the app origin (which can read the token and cache), token/cache
+exfiltration over the network or to a third-party origin, a revoked or replaced token
+continuing to unlock cached data, a second tab outliving sign-out, CSV formula injection,
+clickjacking, MIME sniffing, cross-origin embedding, and stale service-worker assets.
+
+Residual risks that cannot be fixed from inside a static SPA:
+
+- **Device compromise.** Malware, a hostile browser extension, another OS user, or a stolen
+  unlocked device with the profile can read the token and the cache. OPFS and localStorage
+  are **not encrypted by the app**. Rely on full-disk encryption, an OS login, and a
+  dedicated browser profile; use "Clear site data" or Sign out before handing a device on.
+- **Compromised Up API or TLS termination.** The app trusts `api.up.com.au` and the
+  browser's certificate store.
+- **Offline revocation.** While Up is unreachable, a token revoked elsewhere can keep
+  booting from cache for up to the 6-hour verify window. Open the app online to revalidate.
+- **Supply chain.** A dependency that ends up in the bundle runs with the app's privileges.
+  The lockfile, `npm audit` and `npm ci` reduce but do not eliminate that risk.
+- **Origin sharing.** Anything else served from the same origin can read localStorage, the
+  cache and the root service worker. Never host untrusted content, previews, or another
+  app on this origin; use a dedicated domain or subdomain rather than a shared host such
+  as `*.github.io`, where every project shares one origin.
+- **No inactivity lock.** The app is not a kiosk: a device left unlocked with the tab open
+  shows the dashboard, and the offline boot path can render cached rows for up to the
+  verify window. Lock the OS, sign out, or clear site data before walking away.
+
+### Session and token handling
+
+- The token is stored in `localStorage` (`up:token`) because there is no server session and
+  offline-first has to survive a reload. It is never put in a URL, cookie, log, or the DOM.
+- The app refuses to boot on a non-secure origin (plain HTTP on anything except localhost),
+  so the bearer token cannot cross the wire in cleartext (`security.ts`, `main.tsx`).
+- Input is trimmed, length-capped, and rejected if it contains whitespace or control
+  characters. Password-manager autofill is disabled so an Up account password cannot be
+  submitted as a token (`Login.tsx`).
+- `api.login` stores a token only after Up accepts it. Replacing a token wipes the cache of
+  the previous token fingerprint instead of leaving an orphaned copy.
+- Sign-out clears the token, wipes the OPFS database (including sidecars) and removes the
+  cached cursor/category metadata.
+- A 401/403, or a token rejected at boot, does the same wipe. A dead token can never
+  authenticate again, so retaining its rows would only leave data at rest.
+- A `storage` event for the token key reloads other tabs. Signing out (or switching
+  accounts) in one tab therefore ends every tab instead of leaving an in-memory session
+  running in the background.
+- The boot probe trusts a stored token for at most 6 hours, then revalidates with Up. An
+  unreachable Up still boots from cache, per the offline trade-off above.
+- `frame-ancestors`/`X-Frame-Options` and a startup frame check prevent clickjacking on
+  hosts that honour headers or JavaScript.
+
+### Network and API hardening
+
+- Requests go only to `https://api.up.com.au`; `connect-src` enforces it and `up.ts`
+  asserts the URL origin before attaching the bearer header. That includes `links.next`,
+  which is supplied by the response body rather than the code.
+- No cookies or ambient credentials (`credentials: 'omit'`), so there is no CSRF surface.
+- Up responses use `cache: 'no-store'` and `referrerPolicy: 'no-referrer'`, keeping banking
+  data out of the browser HTTP cache and off the Referer header.
+- The token is sent only as an `Authorization` header over HTTPS, never in a query string.
+
+### Content and data handling
+
+- React escapes all Up text; the app has no `dangerouslySetInnerHTML`, `innerHTML` or
+  `eval`, and no external script, font or image origin.
+- Up API URLs are re-checked before use, so a tampered `links.next` cannot redirect the
+  bearer token to another origin.
+- Persisted envelope metadata (cursor, category names, row count) is revalidated as
+  untrusted input and rebuilt into a null-prototype map before use.
+- CSV exports neutralise spreadsheet formula triggers (`=`, `+`, `-`, `@`, tab, CR/LF, even
+  after leading whitespace or a BOM), escape quotes/commas/newlines, and only treat a
+  strict decimal amount as numeric. Filenames are reduced to letters, digits, spaces, `_`
+  and `-`.
+
+### Browser and hosting controls
+
+- **Strict CSP** — injected into `index.html` plus emitted as a header:
+  `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `script-src-attr 'none'`,
+  `worker-src 'self'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data:`,
+  `font-src 'self'`, `connect-src 'self' https://api.up.com.au`,
+  `frame-src/media-src 'none'`, `child-src 'self'` (same-origin workers only),
+  `manifest-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`,
+  `upgrade-insecure-requests`, and `frame-ancestors 'none'` in the header.
+- **Security headers** — `_headers` generated at build time with `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `X-DNS-Prefetch-Control: off`,
+  `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, a restrictive
+  `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`,
+  `X-Permitted-Cross-Domain-Policies` and HSTS.
+- **SPA fallback** — `_redirects` is generated for hosts that support it; otherwise
+  configure the fallback yourself.
+- **No third-party code** — the app ships its own bundle, fonts and assets. Fonts are
+  self-hosted specifically so no third-party origin is in the trust boundary.
+- **Service worker** — caches only same-origin shell assets, never Up responses.
 
 `style-src 'unsafe-inline'` is required because React writes `style` attributes. It cannot
 exfiltrate data because `connect-src` is limited to `'self'` and the Up API.
@@ -169,18 +257,42 @@ compilation only, not JavaScript `eval`.
 
 ### Headers to set at the host
 
-A meta tag cannot express everything, so configure these on your static host:
+A meta tag cannot express framing or policy headers, so configure these on the static host.
+`vite build` emits `dist/_headers` and `dist/_redirects` for Netlify, Cloudflare Pages and
+compatible hosts; they contain:
 
 ```
 X-Frame-Options: DENY
-Content-Security-Policy: frame-ancestors 'none'
+Content-Security-Policy: ...same directives as the meta tag...; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Robots-Tag: noindex, nofollow
+Referrer-Policy: no-referrer
+Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Resource-Policy: same-origin
-Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
+Strict-Transport-Security: max-age=31536000; includeSubDomains
 
 # index.html and sw.js must revalidate so deploys land; hashed assets never change.
 Cache-Control: no-cache                                  # /index.html, /sw.js
 Cache-Control: public, max-age=31536000, immutable       # /assets/*
+```
+
+Hosts that do not process `_headers` (GitHub Pages, plain S3) still enforce the meta CSP
+and the startup frame check, but cannot send HSTS or a real framing header; put a CDN or
+reverse proxy in front of them if those matter. An nginx example is below.
+
+```nginx
+# Copy the exact Content-Security-Policy value from dist/_headers.
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; script-src-attr 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.up.com.au; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; child-src 'self'; media-src 'none'; manifest-src 'self'; upgrade-insecure-requests; frame-ancestors 'none'" always;
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-DNS-Prefetch-Control "off" always;
+add_header X-Robots-Tag "noindex, nofollow" always;
+add_header Referrer-Policy "no-referrer" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+try_files $uri /index.html;
 ```
 
 ## Project layout
@@ -190,7 +302,7 @@ README.md
 .gitignore
 frontend/
   index.html             Vite entry point (CSP meta and manifest link)
-  vite.config.ts         Tailwind, SQLite asset handling, CSP + service-worker generation
+  vite.config.ts         Tailwind, SQLite assets, CSP/security headers, service worker
   components.json        shadcn/ui CLI configuration
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
@@ -201,7 +313,9 @@ frontend/
     db-smoke.mjs         Data-layer test against the real TanStack DB packages
     csv-check.ts         CSV columns, escaping and formula-injection guard
     persistence-smoke.ts Cache fallback when OPFS is unavailable
+    security-check.ts    Token input validation
     render-smoke.mjs     Renders the production bundle in happy-dom against a fake Up API
+                          and asserts CSP/header/token-clearing/401 behaviour
   src/
     App.tsx              Boot probe, per-session store, view switching
     auth.ts              Token storage, cache fingerprint, verify window
@@ -209,8 +323,9 @@ frontend/
     up.ts                Direct Up API client (fetch, errors, pagination)
     csv.ts               Transaction → CSV serialisation for the export
     db.ts                TanStack DB client, descriptors, persistence, fetch gating
-    persistence.ts       OPFS SQLite cache: open, dispose, wipe
+    persistence.ts       OPFS SQLite cache: open, dispose, wipe, forget a user
     envelopeStore.ts     Cursor, category map and last-synced metadata
+    security.ts          Secure-context, frame and token-input checks
     useOnlineStatus.ts   Online/visibility hooks used to pause polling
     types.ts             Up API types shared with the UI
     fonts.css            @font-face declarations for the self-hosted fonts
@@ -276,9 +391,11 @@ npm run build
 
 npm run test:db          # collections, select, orderBy, pagination, teardown
 npm run test:csv         # CSV columns, escaping, formula-injection guard
-npm run test:persistence # local cache falls back to memory without OPFS
+npm run test:security    # token input validation and control-character rejection
+npm run test:persistence # cache fallback, envelope validation, forget a user
 npm run test:render      # production bundle in happy-dom: boot → accounts →
-                         # transactions → load more → sign out → re-login
+                         # transactions → load more → offline → sign out →
+                         # re-login → 401, plus CSP/header/token assertions
 ```
 
 `test:render` runs against `dist`, so build first.
@@ -291,10 +408,12 @@ npm run build
 ```
 
 Everything needed is in `frontend/dist/`. Serve it from any static host (GitHub Pages,
-Netlify, Cloudflare Pages, S3, ...). Configure the host to serve `index.html` for unknown
-paths (SPA fallback) and to send the headers listed above. The CSP meta tag is already in
-the built `index.html`, and `sw.js` sits at the root so its scope covers the whole app.
-Serve everything over HTTPS: both service workers and OPFS require a secure context.
+Netlify, Cloudflare Pages, S3, ...). `dist/_headers` and `dist/_redirects` cover the
+security headers and SPA fallback on Netlify/Cloudflare Pages; other hosts need the
+equivalent configuration described under [Headers to set at the host](#headers-to-set-at-the-host).
+The CSP meta tag is already in the built `index.html`, and `sw.js` sits at the root so its
+scope covers the whole app. Serve everything over HTTPS: the app refuses to boot on a
+non-secure origin, and both service workers and OPFS require a secure context.
 
 ## Up API endpoints used
 
@@ -310,7 +429,10 @@ Serve everything over HTTPS: both service workers and OPFS require a secure cont
 ## Notes
 
 - Single-user: Up allows one personal access token at a time. The client caches rows per
-  token fingerprint, so switching tokens starts from a clean cache.
+  token fingerprint, and switching tokens wipes the previous token's cache.
+- Run `npm ci` (not a floating install) and `npm audit` before deploying. The app has no
+  runtime third-party origins, so a compromised dependency has to ship in the bundle to
+  matter.
 - The main bundle is ~233 kB gzipped (TanStack DB, React, and the persistence wrapper).
   The SQLite engine is a separate ~530 kB gzipped wasm asset fetched the first time the
   local cache opens, from a worker.

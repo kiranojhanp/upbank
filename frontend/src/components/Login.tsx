@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ApiError, api } from '../api'
+import { MAX_TOKEN_LENGTH, tokenInputError } from '../security'
 import { UpLogo } from './UpLogo'
 
 interface LoginProps {
@@ -20,9 +21,9 @@ export function Login({ initialError, onSuccess }: LoginProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const value = token.trim()
-
-    if (!value) {
-      setError('Access token is required')
+    const invalid = tokenInputError(value)
+    if (invalid) {
+      setError(invalid)
       return
     }
 
@@ -30,6 +31,8 @@ export function Login({ initialError, onSuccess }: LoginProps) {
     setError(null)
     try {
       const { uid } = await api.login(value)
+      // Do not keep the secret in component state after it has been stored.
+      setToken('')
       await onSuccess(uid)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not sign in')
@@ -58,13 +61,20 @@ export function Login({ initialError, onSuccess }: LoginProps) {
         {error && <div className="login-error">{error}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
+          {/* Do not let a password manager offer the Up account password here:
+              the app needs a personal access token, not a login. */}
           <input
             type="password"
             name="accessToken"
             placeholder="Personal Access Token"
             required
             className="token-input"
-            autoComplete="current-password"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            inputMode="text"
+            maxLength={MAX_TOKEN_LENGTH}
             value={token}
             onChange={(event) => setToken(event.target.value)}
             disabled={loading}

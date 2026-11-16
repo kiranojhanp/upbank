@@ -319,15 +319,6 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
     }
   }
 
-  async function handleLogout() {
-    try {
-      await api.logout()
-    } catch {
-      // Clear the client state even if the request fails
-    }
-    onSignOut()
-  }
-
   function toggleBlur() {
     setIsBlurred((current) => !current)
     setRevealedAccountId(null)
@@ -434,7 +425,7 @@ export function Dashboard({ uid, onSessionExpired, onSignOut }: DashboardProps) 
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
-            <button type="button" className="logout-link" onClick={handleLogout}>
+            <button type="button" className="logout-link" onClick={onSignOut}>
               Sign out
             </button>
           </div>

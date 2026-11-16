@@ -5,7 +5,7 @@
 import { DbClient } from '@tanstack/react-db'
 import { shouldFetchOnMount } from '../src/db'
 import { readEnvelope, writeEnvelope, writeLastSynced, readLastSynced } from '../src/envelopeStore'
-import { openLocalCache, SCHEMA_VERSION } from '../src/persistence'
+import { forgetUserData, openLocalCache, SCHEMA_VERSION } from '../src/persistence'
 
 let ok = true
 function check(label: string, condition: boolean) {
@@ -75,6 +75,42 @@ async function main() {
 
   const stored = readEnvelope('user-a', 'transactions:acct:all')
   check('missing envelope -> null', stored === null)
+
+  // Stored metadata is untrusted input: anything on the origin can rewrite it.
+  const storage = globalThis.localStorage
+  storage.setItem('up:envelope:user-a:bad-rows', '{"rows":-3}')
+  check('negative rows rejected', readEnvelope('user-a', 'bad-rows') === null)
+  storage.setItem('up:envelope:user-a:bad-shape', 'not json')
+  check('invalid JSON rejected', readEnvelope('user-a', 'bad-shape') === null)
+  storage.setItem(
+    'up:envelope:user-a:mixed',
+    '{"rows":2.9,"nextPage":42,"categoryMap":{"ok":"Groceries","bad":1},"syncedAt":"x"}',
+  )
+  const mixed = readEnvelope('user-a', 'mixed')
+  check(
+    'corrupt fields coerced away',
+    mixed?.rows === 2 &&
+      mixed.nextPage === null &&
+      mixed.categoryMap.ok === 'Groceries' &&
+      !('bad' in mixed.categoryMap) &&
+      mixed.syncedAt === 0,
+  )
+
+  storage.setItem('up:envelope:user-a:proto', '{"rows":1,"categoryMap":{"__proto__":"x"}}')
+  const proto = readEnvelope('user-a', 'proto')
+  check(
+    'category map has null prototype',
+    proto !== null && Object.getPrototypeOf(proto.categoryMap) === null,
+  )
+
+  writeEnvelope('user-a', 'accounts', {
+    rows: 1,
+    nextPage: null,
+    categoryMap: {},
+    syncedAt: 3,
+  })
+  await forgetUserData('user-a')
+  check('forget clears envelope', readEnvelope('user-a', 'accounts') === null)
 
   console.log('\nRESULT:', ok ? 'ALL PASS' : 'FAILURES')
   if (!ok) process.exit(1)

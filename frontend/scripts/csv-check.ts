@@ -1,6 +1,6 @@
 // Checks for src/csv.ts: column order, escaping, and the spreadsheet
 // formula-injection guard.
-import { csvCell, csvFilename, transactionsToCsv } from '../src/csv'
+import { csvCell, csvFilename, csvNumber, transactionsToCsv } from '../src/csv'
 import type { Transaction } from '../src/types'
 
 let ok = true
@@ -13,6 +13,12 @@ check('formula neutralised', csvCell('=cmd|x') === "'=cmd|x")
 check('leading minus text neutralised', csvCell('-5') === "'-5")
 check('plain passes through', csvCell('Woolworths') === 'Woolworths')
 check('null -> empty', csvCell(null) === '')
+check('leading whitespace formula neutralised', csvCell('  =cmd') === "'  =cmd")
+check('BOM formula neutralised', csvCell('\uFEFF=cmd') === "'\uFEFF=cmd")
+check('leading newline formula neutralised', csvCell('\n=cmd') === "'\n=cmd")
+check('numeric amount stays numeric', csvNumber('-12.34') === '-12.34')
+check('invalid amount neutralised', csvNumber('=1+1') === "'=1+1")
+check('non-decimal amount neutralised', csvNumber('-1+2') === "'-1+2")
 check('filename sanitised', csvFilename('Everyday / Account') === 'Everyday - Account-transactions.csv')
 
 const tx = [

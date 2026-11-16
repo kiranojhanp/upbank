@@ -5,6 +5,7 @@ import {
   type BrowserWASQLiteDatabase,
   type PersistedCollectionPersistence,
 } from '@tanstack/browser-db-sqlite-persistence'
+import { clearStoredData } from './envelopeStore'
 
 /**
  * Durable local cache for TanStack DB collections, backed by SQLite in OPFS.
@@ -30,7 +31,9 @@ export interface LocalCache {
 export const SCHEMA_VERSION = 1
 
 const DB_PREFIX = 'up-cache-'
-const DB_SUFFIXES = ['', '-journal', '-wal'] as const
+// Remove every sidecar SQLite may create. A shared-memory file left behind can
+// keep rows recoverable even after the main database is gone.
+const DB_SUFFIXES = ['', '-journal', '-wal', '-shm'] as const
 
 function databaseFileName(uid: string): string {
   return `${DB_PREFIX}${uid}.sqlite`
@@ -185,4 +188,19 @@ export function openLocalCache(uid: string): Promise<LocalCache | null> {
   })
   openCaches.set(uid, pending)
   return pending
+}
+
+/**
+ * Delete all locally stored data for one token fingerprint without requiring a
+ * live session. Used when a token is rejected, replaced, or signed out, so the
+ * rows of an unusable session cannot linger on the device.
+ */
+export async function forgetUserData(uid: string): Promise<void> {
+  const pending = openCaches.get(uid)
+  if (pending) {
+    const cache = await pending.catch(() => null)
+    if (cache) await cache.dispose()
+  }
+  clearStoredData(uid)
+  await removeDatabaseFiles(uid)
 }

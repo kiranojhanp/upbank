@@ -9,6 +9,16 @@ const bundleName = html.match(/src="\/assets\/(index-[^"]+\.js)"/)?.[1]
 if (!bundleName) throw new Error('could not find bundle in dist/index.html')
 const bundlePath = new URL(`../dist/assets/${bundleName}`, import.meta.url)
 
+// Static security artifacts the build must always produce.
+const headers = readFileSync(new URL('../dist/_headers', import.meta.url), 'utf8')
+const redirects = readFileSync(new URL('../dist/_redirects', import.meta.url), 'utf8')
+const hasCspMeta = /http-equiv="Content-Security-Policy"/.test(html)
+const cspAllowsUp = html.includes('https://api.up.com.au')
+const hasFrameAncestors = /frame-ancestors 'none'/.test(headers)
+const hasNoSniff = /X-Content-Type-Options: nosniff/.test(headers)
+const hasHsts = /Strict-Transport-Security: max-age=/.test(headers)
+const hasSpaFallback = redirects.trim() === '/*    /index.html   200'
+
 const page = new Window({ url: 'http://localhost:8000/' })
 page.document.body.innerHTML = '<div id="root"></div>'
 
@@ -89,6 +99,7 @@ const txPage2 = {
 }
 
 const requested = []
+let unauthorized = false
 globalThis.fetch = async (input) => {
   const url = String(input)
   requested.push(url)
@@ -105,6 +116,11 @@ globalThis.fetch = async (input) => {
   else if (path === '/api/v1/accounts/acc-1/transactions') {
     body = query.includes('after') ? txPage2 : txPage1
   } else body = { data: [], links: { next: null } }
+
+  if (unauthorized) {
+    status = 401
+    body = { errors: [{ title: 'Unauthorized' }] }
+  }
 
   return {
     ok: status >= 200 && status < 300,
@@ -135,6 +151,11 @@ const body = text()
 console.log('rendered accounts   :', body.includes('Spending') && body.includes('Joint'))
 console.log('balance formatted   :', body.includes('1,234.56'))
 console.log('login screen gone   :', !body.includes('Personal Access Token'))
+const tokenNotInDom = !page.document.body.innerHTML.includes('pat-test')
+console.log('token not in DOM     :', tokenNotInDom)
+console.log('csp meta present     :', hasCspMeta && cspAllowsUp)
+console.log('security headers     :', hasFrameAncestors && hasNoSniff && hasHsts)
+console.log('spa fallback         :', hasSpaFallback)
 
 // Select an account and wait for its transactions.
 page.document.querySelector('[data-account-id="acc-1"]')?.click()
@@ -197,7 +218,18 @@ while (Date.now() < logoutDeadline && !isLoginScreen()) {
   await new Promise((resolve) => setTimeout(resolve, 50))
 }
 const loginReached = isLoginScreen()
+const tokenClearedAfterSignOut = page.localStorage.getItem('up:token') === null
+const hasStoredEnvelope = () => {
+  for (let index = 0; index < page.localStorage.length; index += 1) {
+    const key = page.localStorage.key(index)
+    if (key?.startsWith('up:envelope:') || key?.startsWith('up:synced:')) return true
+  }
+  return false
+}
+const metadataClearedAfterSignOut = !hasStoredEnvelope()
 console.log('sign out -> login   :', loginReached)
+console.log('token cleared on out :', tokenClearedAfterSignOut)
+console.log('cache metadata gone :', metadataClearedAfterSignOut)
 
 // Re-login must validate the token, store it, build a new store and refetch.
 const tokenInput = page.document.querySelector('input[name="accessToken"]')
@@ -215,10 +247,41 @@ while (Date.now() < reloginDeadline && !text().includes('Spending')) {
 const accountsCalls = requested.filter(
   (u) => new URL(u, 'http://x').pathname === '/api/v1/accounts',
 ).length
-console.log('re-login renders    :', text().includes('Spending'))
+const reloginRendered = text().includes('Spending')
+console.log('re-login renders    :', reloginRendered)
 console.log('accounts refetched  :', accountsCalls >= 2, `(${accountsCalls} calls)`)
 
-if (!page2Rendered || !loginReached || !text().includes('Spending')) {
+// A 401 must clear the token and cache, and land on login. Otherwise a reload
+// would silently restore cached banking data for a dead session.
+unauthorized = true
+findButton('Refresh')?.click()
+const expiredDeadline = Date.now() + 3000
+while (Date.now() < expiredDeadline && !isLoginScreen()) {
+  await new Promise((resolve) => setTimeout(resolve, 50))
+}
+const expiredToLogin = isLoginScreen()
+const tokenClearedAfter401 = page.localStorage.getItem('up:token') === null
+const metadataClearedAfter401 = !hasStoredEnvelope()
+console.log('401 -> login         :', expiredToLogin)
+console.log('token cleared on 401 :', tokenClearedAfter401)
+console.log('cache metadata 401   :', metadataClearedAfter401)
+
+if (
+  !page2Rendered ||
+  !loginReached ||
+  !tokenClearedAfterSignOut ||
+  !metadataClearedAfterSignOut ||
+  !expiredToLogin ||
+  !tokenClearedAfter401 ||
+  !metadataClearedAfter401 ||
+  !reloginRendered ||
+  !tokenNotInDom ||
+  !hasCspMeta ||
+  !cspAllowsUp ||
+  !hasFrameAncestors ||
+  !hasNoSniff ||
+  !hasHsts
+) {
   console.log('\n--- body ---\n', text().slice(0, 800))
   console.log('\n--- react console.errors ---\n', errors.slice(0, 5).join('\n\n'))
   process.exit(1)

@@ -21,13 +21,30 @@ const HEADER = [
   'Foreign Currency',
 ]
 
-const INJECTION_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r'])
+// A spreadsheet may ignore leading whitespace (and a BOM) before deciding that
+// a cell is a formula, so look past it instead of only checking text[0].
+// Newlines are included because some importers treat a leading CR/LF as the
+// start of a new row or formula.
+const INJECTION_PATTERN = /^[\s\uFEFF]*[=+\-@\t\r\n]/
 
 /** Neutralise a text cell that a spreadsheet would treat as a formula. */
 export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return ''
   const text = String(value)
-  return INJECTION_TRIGGERS.has(text[0]) ? `'${text}` : text
+  return INJECTION_PATTERN.test(text) ? `'${text}` : text
+}
+
+const NUMERIC_PATTERN = /^-?\d+(?:\.\d+)?$/
+
+/**
+ * Money is copied from Up as a decimal string so a leading minus stays a
+ * number. Only accept that exact shape; anything else goes through the formula
+ * guard instead of being written to the file verbatim.
+ */
+export function csvNumber(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  const text = String(value)
+  return NUMERIC_PATTERN.test(text) ? text : csvCell(text)
 }
 
 function field(value: string): string {
@@ -69,12 +86,12 @@ export function transactionsToCsv(
         csvCell(attributes.status),
         csvCell(attributes.description),
         // Up-formatted decimal; left raw so a leading minus is numeric.
-        amount?.value ?? '',
+        csvNumber(amount?.value),
         csvCell(amount?.currencyCode),
         csvCell(categoryId ? categoryMap[categoryId] : ''),
         csvCell(tags.join('; ')),
         csvCell(attributes.message),
-        foreign?.value ?? '',
+        csvNumber(foreign?.value),
         csvCell(foreign?.currencyCode),
       ]),
     )

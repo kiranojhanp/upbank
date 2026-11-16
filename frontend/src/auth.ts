@@ -8,7 +8,8 @@
  * short-lived token in the Up app to bound the exposure.
  */
 
-const TOKEN_KEY = 'up:token'
+/** Storage key for the bearer token. Exported so other tabs can watch it. */
+export const TOKEN_STORAGE_KEY = 'up:token'
 const VERIFIED_KEY = 'up:verifiedAt'
 // Re-check the token against Up at most this often. Between checks the boot
 // probe trusts the stored token, which keeps page loads off Up while still
@@ -28,7 +29,7 @@ function store(): Storage | null {
 
 /** Read the persisted token into memory. Call once at boot, before any request. */
 export function loadToken(): string | null {
-  currentToken = store()?.getItem(TOKEN_KEY) ?? null
+  currentToken = store()?.getItem(TOKEN_STORAGE_KEY) ?? null
   return currentToken
 }
 
@@ -40,7 +41,7 @@ export function setToken(token: string): void {
   currentToken = token
   try {
     const storage = store()
-    storage?.setItem(TOKEN_KEY, token)
+    storage?.setItem(TOKEN_STORAGE_KEY, token)
     // A freshly entered token has not been verified yet.
     storage?.removeItem(VERIFIED_KEY)
   } catch {
@@ -52,7 +53,7 @@ export function clearToken(): void {
   currentToken = null
   try {
     const storage = store()
-    storage?.removeItem(TOKEN_KEY)
+    storage?.removeItem(TOKEN_STORAGE_KEY)
     storage?.removeItem(VERIFIED_KEY)
   } catch {
     // Ignore.

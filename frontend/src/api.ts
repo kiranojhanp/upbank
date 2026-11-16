@@ -3,8 +3,10 @@
  * (`up.ts`) and the local token lifecycle (`auth.ts`), keeping the same shape
  * the components used when a server proxied these calls.
  */
-import { clearToken, getToken, markVerified, setToken, uidForToken } from './auth'
+import { getToken, markVerified, setToken, uidForToken } from './auth'
 import { csvFilename, transactionsToCsv } from './csv'
+import { forgetUserData } from './persistence'
+import { tokenInputError } from './security'
 import type {
   Account,
   NextTransactionsResponse,
@@ -39,15 +41,25 @@ export const api = {
    * `ApiError` (status 401) so the login form can show the message.
    */
   async login(accessToken: string): Promise<{ ok: boolean; uid: string }> {
-    await ping(accessToken)
-    setToken(accessToken)
+    const token = accessToken.trim()
+    const invalid = tokenInputError(token)
+    if (invalid) throw new ApiError(400, invalid)
+
+    await ping(token)
+
+    // Capture the previous token before overwriting it so its cache can be
+    // removed rather than left orphaned on a shared device.
+    const previousToken = getToken()
+    setToken(token)
     // Login just pinged Up, so the token starts out verified.
     markVerified()
-    return { ok: true, uid: await uidForToken(accessToken) }
-  },
 
-  logout(): void {
-    clearToken()
+    const uid = await uidForToken(token)
+    if (previousToken && previousToken !== token) {
+      const previousUid = await uidForToken(previousToken)
+      if (previousUid !== uid) await forgetUserData(previousUid)
+    }
+    return { ok: true, uid }
   },
 
   /**

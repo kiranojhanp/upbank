@@ -49,17 +49,41 @@ function envelopeKey(uid: string, cacheKey: string): string {
   return `${ENVELOPE_PREFIX}${uid}:${cacheKey}`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Copy only string values into a null-prototype map. Stored metadata is
+ * attacker-writable by anything already running on this origin, so treat it as
+ * untrusted input rather than trusting the JSON shape.
+ */
+function readCategoryMap(value: unknown): Record<string, string> {
+  const map = Object.create(null) as Record<string, string>
+  if (!isRecord(value)) return map
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string') map[key] = entry
+  }
+  return map
+}
+
 export function readEnvelope(uid: string, cacheKey: string): StoredEnvelope | null {
   const raw = store()?.getItem(envelopeKey(uid, cacheKey))
   if (!raw) return null
   try {
-    const value = JSON.parse(raw) as Partial<StoredEnvelope>
-    if (typeof value?.rows !== 'number') return null
+    const value: unknown = JSON.parse(raw)
+    if (!isRecord(value)) return null
+    if (typeof value.rows !== 'number' || !Number.isFinite(value.rows) || value.rows < 0) {
+      return null
+    }
     return {
-      rows: value.rows,
-      nextPage: value.nextPage ?? null,
-      categoryMap: value.categoryMap ?? {},
-      syncedAt: value.syncedAt ?? 0,
+      rows: Math.floor(value.rows),
+      nextPage: typeof value.nextPage === 'string' ? value.nextPage : null,
+      categoryMap: readCategoryMap(value.categoryMap),
+      syncedAt:
+        typeof value.syncedAt === 'number' && Number.isFinite(value.syncedAt)
+          ? value.syncedAt
+          : 0,
     }
   } catch {
     return null

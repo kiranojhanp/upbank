@@ -44,17 +44,46 @@ interface UpList<T> {
   links?: { next: string | null } | null
 }
 
+const UP_API_ORIGIN = new URL(UP_API_BASE_URL).origin
+
+/**
+ * Never attach the bearer token to a URL outside Up's API origin.
+ *
+ * Request URLs mostly come from constants, but `links.next` is supplied by the
+ * response body. Validating it before use means a malformed or tampered
+ * response cannot redirect the user's token somewhere else, even if the CSP
+ * `connect-src` allow-list is ever loosened.
+ */
+export function assertUpUrl(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url, UP_API_BASE_URL)
+  } catch {
+    throw new ApiError(0, 'Invalid Up API URL')
+  }
+  if (parsed.protocol !== 'https:' || parsed.origin !== UP_API_ORIGIN) {
+    throw new ApiError(0, 'Refusing to send credentials to an unexpected origin')
+  }
+  return parsed.toString()
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getToken()
   if (!token) throw new SessionExpiredError()
 
+  const target = assertUpUrl(url)
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await fetch(target, {
       ...init,
       // No cookies: the bearer header is the whole credential, and Up replies
       // with `Access-Control-Allow-Origin: *`, which forbids credentialed CORS.
       credentials: 'omit',
+      // Banking responses must not be written to the browser's HTTP cache.
+      // The app keeps its own OPFS cache instead; see the README for its
+      // at-rest limits.
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
       headers: {
         Authorization: `Bearer ${token}`,
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -83,11 +112,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** Validate a token before storing it. Distinguishes a bad token from no network. */
 export async function ping(token: string): Promise<void> {
+  const target = assertUpUrl(`${UP_API_BASE_URL}/util/ping`)
   let res: Response
   try {
-    res = await fetch(`${UP_API_BASE_URL}/util/ping`, {
+    res = await fetch(target, {
       headers: { Authorization: `Bearer ${token}` },
       credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
     })
   } catch {
     throw new ApiError(0, 'Could not reach Up. Check your connection and try again.')

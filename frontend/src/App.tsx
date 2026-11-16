@@ -1,11 +1,18 @@
 import { DbProvider, useLiveQuery } from '@tanstack/react-db'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SessionExpiredError, api } from './api'
-import { clearToken, isFreshlyVerified, loadToken, markVerified, uidForToken } from './auth'
+import {
+  TOKEN_STORAGE_KEY,
+  clearToken,
+  isFreshlyVerified,
+  loadToken,
+  markVerified,
+  uidForToken,
+} from './auth'
 import { Dashboard } from './components/Dashboard'
 import { Login } from './components/Login'
 import { accountsDescriptor, createSessionClient, type SessionClient } from './db'
-import { openLocalCache } from './persistence'
+import { forgetUserData, openLocalCache } from './persistence'
 import { useOnlineStatus } from './useOnlineStatus'
 
 // Mirrors the transaction fallback in Dashboard: if a cache is present but the
@@ -41,6 +48,18 @@ export default function App() {
     await client.dispose({ wipe })
   }, [])
 
+  // Another tab signing in, signing out, or switching tokens must not leave
+  // this tab holding an in-memory credential and an open cache. A reload tears
+  // the whole session down and boots from whatever token is stored now.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== TOKEN_STORAGE_KEY) return
+      window.location.reload()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
   // Boot from the locally stored token. There is no server session to ask, so
   // a token renders immediately (from cache) and is only re-checked against Up
   // once per verify window. A revoked token signs out before it can render
@@ -60,7 +79,11 @@ export default function App() {
         if (!isFreshlyVerified()) {
           const status = await api.checkToken()
           if (status === 'invalid') {
+            // The token is dead, so its rows can never be used again. Remove
+            // both the credential and the cache instead of leaving banking
+            // data on the device for a session that cannot be authenticated.
             clearToken()
+            await forgetUserData(uid)
             setBoot({
               phase: 'signed-out',
               error: 'Your session has expired. Please log in again.',
@@ -84,6 +107,18 @@ export default function App() {
     [activate],
   )
 
+  const handleExpired = useCallback(() => {
+    // A 401/403 means the token is no longer valid. Clear it and wipe the
+    // cache so a reload cannot restore the dashboard offline.
+    clearToken()
+    void endSession('Your session has expired. Please log in again.', { wipe: true })
+  }, [endSession])
+
+  const handleSignOut = useCallback(() => {
+    clearToken()
+    void endSession(null, { wipe: true })
+  }, [endSession])
+
   if (boot.phase === 'booting') {
     return (
       <div className="boot-screen">
@@ -98,16 +133,7 @@ export default function App() {
 
   return (
     <DbProvider client={boot.client.db}>
-      <Authenticated
-        client={boot.client}
-        onExpired={() =>
-          void endSession('Your session has expired. Please log in again.', { wipe: false })
-        }
-        onUnavailable={() =>
-          void endSession('Could not reach Up. Please try again.', { wipe: false })
-        }
-        onSignOut={() => void endSession(null, { wipe: true })}
-      />
+      <Authenticated client={boot.client} onExpired={handleExpired} onSignOut={handleSignOut} />
     </DbProvider>
   )
 }
@@ -115,11 +141,10 @@ export default function App() {
 interface AuthenticatedProps {
   client: SessionClient
   onExpired: () => void
-  onUnavailable: () => void
   onSignOut: () => void
 }
 
-function Authenticated({ client, onExpired, onUnavailable, onSignOut }: AuthenticatedProps) {
+function Authenticated({ client, onExpired, onSignOut }: AuthenticatedProps) {
   const online = useOnlineStatus()
   const accountsCollection = useMemo(
     () => client.db.collection(accountsDescriptor),
@@ -140,10 +165,6 @@ function Authenticated({ client, onExpired, onUnavailable, onSignOut }: Authenti
     [client, onExpired],
   )
 
-  useEffect(() => {
-    if (status === 'error' && !hasAccounts) onUnavailable()
-  }, [status, hasAccounts, onUnavailable])
-
   // Restored rows can arrive while the collection still reports loading, so
   // render on data rather than status alone.
   const pending = (status === 'loading' || status === 'idle') && !hasAccounts
@@ -159,10 +180,34 @@ function Authenticated({ client, onExpired, onUnavailable, onSignOut }: Authenti
     return () => window.clearTimeout(timer)
   }, [pending, online, accountsCollection])
 
-  if (pending || failed) {
+  if (pending) {
     return (
       <div className="boot-screen">
         <p className="loading-text">Loading…</p>
+      </div>
+    )
+  }
+
+  if (failed) {
+    // Do not bounce to the login screen: the token is still valid and the
+    // cache may be usable, so a network failure must not look like a sign-out
+    // (or leave the user thinking the device is locked when it is not).
+    return (
+      <div className="boot-screen">
+        <p className="login-error">Could not reach Up. Check your connection and try again.</p>
+        <button
+          type="button"
+          className="login-btn"
+          onClick={async () => {
+            try {
+              await accountsCollection.utils.refetch()
+            } catch {
+              // The error state already explains the failure.
+            }
+          }}
+        >
+          Try again
+        </button>
       </div>
     )
   }

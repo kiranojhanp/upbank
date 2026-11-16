@@ -9,13 +9,15 @@ import { defineConfig, type Plugin } from 'vite'
 // is no dev proxy. Up answers with `Access-Control-Allow-Origin: *`.
 //
 // With no server to send security headers, a production build injects a
-// Content-Security-Policy meta tag. `connect-src` must allow the Up API, and
+// Content-Security-Policy meta tag and emits `_headers` / `_redirects` for
+// static hosts that support them. `connect-src` must allow the Up API, and
 // `'wasm-unsafe-eval'` compiles the wa-sqlite engine. Directives that meta tags
-// cannot express (`frame-ancestors`, `X-Frame-Options`, `Permissions-Policy`)
-// are left to the static host's header config — see the README.
+// cannot express (`frame-ancestors`) live in the generated header file; a host
+// that ignores `_headers` needs them configured manually (see README).
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
+  "script-src-attr 'none'",
   "worker-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -24,7 +26,31 @@ const CONTENT_SECURITY_POLICY = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
+  "frame-src 'none'",
+  "child-src 'self'",
+  "media-src 'none'",
+  "manifest-src 'self'",
+  "upgrade-insecure-requests",
 ].join('; ')
+
+// `frame-ancestors` is ignored in a <meta> CSP, so the header version carries
+// the anti-framing directive. The generated `_headers` file keeps it in sync
+// for static hosts that support one (Netlify, Cloudflare Pages).
+const CONTENT_SECURITY_POLICY_HEADER = `${CONTENT_SECURITY_POLICY}; frame-ancestors 'none'`
+
+const SECURITY_HEADERS = [
+  `Content-Security-Policy: ${CONTENT_SECURITY_POLICY_HEADER}`,
+  'X-Frame-Options: DENY',
+  'X-Content-Type-Options: nosniff',
+  'X-DNS-Prefetch-Control: off',
+  'X-Robots-Tag: noindex, nofollow',
+  'Referrer-Policy: no-referrer',
+  "Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), browsing-topics=()",
+  'Cross-Origin-Opener-Policy: same-origin',
+  'Cross-Origin-Resource-Policy: same-origin',
+  'X-Permitted-Cross-Domain-Policies: none',
+  'Strict-Transport-Security: max-age=31536000; includeSubDomains',
+]
 
 function injectCsp(): Plugin {
   return {
@@ -40,6 +66,42 @@ function injectCsp(): Plugin {
           injectTo: 'head-prepend',
         },
       ]
+    },
+  }
+}
+
+/**
+ * Static hosts that understand `_headers` / `_redirects` get the full header
+ * set (including the anti-framing directive a meta tag cannot express) and an
+ * SPA fallback without any extra configuration. Hosts that ignore these files
+ * still get the in-document CSP and the README's nginx/Caddy guidance.
+ */
+function generateSecurityFiles(): Plugin {
+  return {
+    name: 'generate-security-files',
+    apply: 'build',
+    generateBundle() {
+      const headers = [
+        '/*',
+        ...SECURITY_HEADERS.map((header) => `  ${header}`),
+        '',
+        '/index.html',
+        '  Cache-Control: no-cache',
+        '',
+        '/sw.js',
+        '  Cache-Control: no-cache',
+        '',
+        '/assets/*',
+        '  Cache-Control: public, max-age=31536000, immutable',
+        '',
+      ].join('\n')
+
+      this.emitFile({ type: 'asset', fileName: '_headers', source: headers })
+      this.emitFile({
+        type: 'asset',
+        fileName: '_redirects',
+        source: '/*    /index.html   200\n',
+      })
     },
   }
 }
@@ -119,7 +181,7 @@ function generateServiceWorker(): Plugin {
       const precache = new Set<string>(['/', '/index.html'])
 
       for (const fileName of Object.keys(bundle)) {
-        if (fileName === 'sw.js' || fileName.endsWith('.map')) continue
+        if (fileName === 'sw.js' || fileName.endsWith('.map') || fileName.startsWith('_')) continue
         precache.add(`/${fileName}`)
       }
 
@@ -144,7 +206,7 @@ function generateServiceWorker(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), injectCsp(), generateServiceWorker()],
+  plugins: [react(), tailwindcss(), injectCsp(), generateSecurityFiles(), generateServiceWorker()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
