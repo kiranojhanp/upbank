@@ -9,7 +9,7 @@ import {
   writeEnvelope,
   writeLastSynced,
 } from '../envelopeStore'
-import { formatRelativeTime } from '../format'
+import { readSettings } from '../settingsStore'
 import type { Account, TransactionFilters } from '../types'
 import { forgetUserData } from '../persistence'
 import type { TransactionsSeed } from '../pagination'
@@ -20,6 +20,7 @@ import { BackupDialog } from './BackupDialog'
 import { Filters } from './Filters'
 import { PlanView } from './PlanView'
 import { PlanModal } from './PlanModal'
+import { SettingsDialog } from './SettingsDialog'
 import { WeekView } from './WeekView'
 import { Toasts, type ToastItem } from './Toasts'
 import { TransactionsView, type TransactionsHandle } from './TransactionsView'
@@ -100,6 +101,23 @@ function ClearCacheIcon() {
   )
 }
 
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z" />
+    </svg>
+  )
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 11a8 8 0 10-2.34 5.66M20 5v6h-6" />
+    </svg>
+  )
+}
+
 function SignOutIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -112,6 +130,8 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
   const [view, setView] = useState<'accounts' | 'week' | 'plan'>('week')
   const [backupOpen, setBackupOpen] = useState(false)
   const [confirmClearCache, setConfirmClearCache] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [weekStartsOn, setWeekStartsOn] = useState(() => readSettings(uid).weekStartsOn)
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
   const [isBlurred, setIsBlurred] = useState(false)
@@ -134,6 +154,16 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     () => readLastSynced(uid),
     () => null,
   )
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith('up:settings:')) {
+        setWeekStartsOn(readSettings(uid).weekStartsOn)
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [uid])
 
   const accountsCollection = useMemo(
     () => dbClient.collection(accountsDescriptor),
@@ -465,25 +495,39 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
             {!cacheAvailable && (
               <p className="cache-note">Offline cache unavailable — this session only.</p>
             )}
-            <div className="sync-status">
-              <span className="sync-time">
-                {online
-                  ? lastSynced
-                    ? `Synced ${formatRelativeTime(lastSynced)}`
-                    : 'Not synced yet'
-                  : 'Offline'}
-              </span>
+            <div className="sidebar-actions" role="group" aria-label="Data and session">
               <button
                 type="button"
-                className="refresh-btn"
-                onClick={() => void refresh()}
-                disabled={refreshing || !online}
-                title={online ? 'Fetch fresh data from Up' : 'Unavailable offline'}
+                className="sidebar-action-btn"
+                aria-label="Settings"
+                data-tooltip="Settings"
+                onClick={() => setSettingsOpen(true)}
               >
-                {refreshing ? 'Refreshing…' : 'Refresh'}
+                <SettingsIcon />
               </button>
-            </div>
-            <div className="sidebar-actions" role="group" aria-label="Data and session">
+              <button
+                type="button"
+                className={`sidebar-action-btn is-refresh${refreshing ? ' is-spinning' : ''}`}
+                aria-label="Refresh"
+                data-tooltip={
+                  !online
+                    ? 'Refresh · offline'
+                    : refreshing
+                      ? 'Refreshing…'
+                      : lastSynced
+                        ? `Refresh · last synced ${new Date(lastSynced).toLocaleString('en-AU', {
+                            day: 'numeric',
+                            month: 'short',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}`
+                        : 'Refresh · not synced yet'
+                }
+                disabled={refreshing || !online}
+                onClick={() => void refresh()}
+              >
+                <RefreshIcon />
+              </button>
               <button
                 type="button"
                 className="sidebar-action-btn"
@@ -522,7 +566,9 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
             <PlanView key={uid} uid={uid} onNotify={addToast} onBack={() => setView('week')} />
           ) : view === 'week' ? (
             <WeekView
+              key={`${uid}:${weekStartsOn}`}
               uid={uid}
+              weekStartsOn={weekStartsOn}
               accounts={accounts ?? []}
               online={online}
               onNotify={addToast}
@@ -595,6 +641,14 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
 
       {backupOpen && (
         <BackupDialog uid={uid} onClose={() => setBackupOpen(false)} />
+      )}
+
+      {settingsOpen && (
+        <SettingsDialog
+          uid={uid}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => setWeekStartsOn(readSettings(uid).weekStartsOn)}
+        />
       )}
 
       <PlanModal

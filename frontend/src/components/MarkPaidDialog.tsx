@@ -5,17 +5,14 @@ import { SessionExpiredError, api } from '../api'
 import { formatMoney, localDateIso } from '../budget'
 import { getTransactionsDescriptor } from '../db'
 import type { Account, Transaction } from '../types'
-import {
-  endOfWeek,
-  formatWeekDay,
-  startOfWeek,
-  type WeekOccurrence,
-} from '../week'
+import { formatWeekDay, type WeekOccurrence } from '../week'
 import { PlanModal } from './PlanModal'
 
 interface MarkPaidDialogProps {
   accounts: Account[]
   occurrence: WeekOccurrence
+  weekStart: string
+  weekEnd: string
   online: boolean
   /** Transaction id → expense name, for transactions already used. */
   usedTransactions: Map<string, string>
@@ -50,6 +47,8 @@ function signMoney(transaction: Transaction): string {
 export function MarkPaidDialog({
   accounts,
   occurrence,
+  weekStart,
+  weekEnd,
   online,
   usedTransactions,
   onClose,
@@ -158,8 +157,8 @@ export function MarkPaidDialog({
     }
     const date = transactionDay(selected)
     if (
-      date < startOfWeek(occurrence.date) ||
-      date > endOfWeek(occurrence.date)
+      date < weekStart ||
+      date > weekEnd
     ) {
       warnings.push('This transaction is dated outside the occurrence week.')
     }
@@ -341,8 +340,8 @@ export function MarkPaidDialog({
                     const usedFor = usedTransactions.get(transaction.id)
                     const amount = transaction.attributes.amount.valueInBaseUnits
                     const thisWeek =
-                      transactionDay(transaction) >= startOfWeek(occurrence.date) &&
-                      transactionDay(transaction) <= endOfWeek(occurrence.date)
+                      transactionDay(transaction) >= weekStart &&
+                      transactionDay(transaction) <= weekEnd
                     return (
                       <button
                         key={transaction.id}

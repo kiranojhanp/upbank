@@ -352,21 +352,6 @@ body {
   gap: 0.65rem;
 }
 
-.sync-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.sync-time {
-  font-family: var(--fm);
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--t3);
-}
-
 .cache-note {
   margin: 0;
   font-family: var(--fm);
@@ -426,6 +411,12 @@ body {
   outline: 2px solid var(--up);
   outline-offset: 2px;
 }
+.sidebar-action-btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sidebar-action-btn.is-spinning svg { animation: sidebar-spin 0.9s linear infinite; }
+@keyframes sidebar-spin { to { transform: rotate(360deg); } }
 
 .sidebar-action-btn::before {
   content: '';
@@ -502,6 +493,22 @@ body {
   right: 17px;
   left: auto;
   transform: translateX(50%);
+}
+
+/* The refresh tooltip is longer; anchor it to the left so it stays inside. */
+.sidebar-action-btn.is-refresh::after {
+  left: 0;
+  right: auto;
+  transform: translate(0, 3px);
+}
+.sidebar-action-btn.is-refresh:hover::after,
+.sidebar-action-btn.is-refresh:focus-visible::after {
+  transform: translate(0, 0);
+}
+.sidebar-action-btn.is-refresh::before {
+  left: 17px;
+  right: auto;
+  transform: translateX(-50%);
 }
 
 .logout-link {
@@ -2659,6 +2666,45 @@ button.balance-toggle-btn {
 }
 .week-entry-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.week-paid-block {
+  margin-top: 0.55rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+.week-paid-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.25rem 0.95rem 0.35rem;
+}
+.week-paid-head h3 {
+  color: var(--t2);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.week-paid-head p {
+  color: var(--t3);
+  font-family: var(--fm);
+  font-size: 0.62rem;
+}
+.week-paid-list { display: flex; flex-direction: column; }
+.week-entry-paid { background: rgba(14,204,122,0.025); }
+.week-entry-paid .week-entry-remaining { color: var(--t3); }
+.week-paid-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  color: var(--green);
+  font-size: 0.57rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.week-paid-badge svg { width: 11px; height: 11px; }
+
 /* ─── selected entry detail ──────────────────────────────────── */
 .week-detail {
   position: sticky;
@@ -3147,6 +3193,30 @@ button.balance-toggle-btn {
 }
 .week-pay-btn { align-self: flex-start; }
 
+.week-paid-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.week-paid-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--green);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.week-paid-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(14,204,122,0.12);
+}
+.week-paid-status-icon svg { width: 11px; height: 11px; }
+
 .mark-paid-meta {
   margin-bottom: 0.75rem;
   color: var(--t3);
@@ -3454,6 +3524,59 @@ button.balance-toggle-btn {
 @media (max-width: 600px) {
   .mark-paid-account { margin-bottom: 0.65rem; }
   .mark-paid-validation { font-size: 0.64rem; }
+}
+
+
+/* ─── settings ───────────────────────────────────────────────── */
+.settings-form { display: flex; flex-direction: column; }
+.settings-section h4 {
+  color: var(--t2);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.settings-copy {
+  margin: 0.5rem 0 0.85rem;
+  color: var(--t2);
+  font-size: 0.73rem;
+  line-height: 1.65;
+  max-width: 52ch;
+}
+.settings-field { max-width: 18rem; }
+.settings-preview {
+  margin-top: 0.9rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--lift);
+}
+.settings-preview > span {
+  display: block;
+  color: var(--t3);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.settings-preview > strong {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--t1);
+  font-family: var(--fm);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.settings-preview > p {
+  margin-top: 0.35rem;
+  color: var(--t3);
+  font-size: 0.66rem;
+  line-height: 1.55;
+}
+.settings-error { margin-top: 0.6rem; color: #FF8A9B; font-size: 0.69rem; }
+
+@media (max-width: 600px) {
+  .settings-field { max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

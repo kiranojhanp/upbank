@@ -156,15 +156,16 @@ const FUEL_PAYMENT = {
   },
 }
 
+// Newest first, matching Up's transaction ordering.
 const FIRST_PAGE = [
+  INTERNET_PAYMENT,
+  PENDING,
+  FUEL_PAYMENT,
+  RENT_PAYMENT,
   COFFEE,
   GROCERIES,
   SALARY,
-  PENDING,
   FORMULA,
-  INTERNET_PAYMENT,
-  RENT_PAYMENT,
-  FUEL_PAYMENT,
 ]
 const SECOND_PAGE = [OLDER_COFFEE]
 

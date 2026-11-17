@@ -69,18 +69,23 @@ test.describe('weekly recurring expenses', () => {
     await expect(page.locator('.week-entry-list')).toHaveCount(0)
     await expect(page.getByText(/All done for this week/)).toBeVisible()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
+    await expect(page.locator('.week-paid-status')).toContainText('Paid this week')
 
     await page.getByRole('button', { name: 'Next week' }).click()
     await expect(page.locator('#week-title')).toContainText('Wed 11 – Tue 17 Nov 2026')
     await expect(app.weekEntry('Rent')).toBeVisible()
+    await expect(app.weekPaidEntry('Rent')).toHaveCount(0)
     await expect(app.weekStat('due')).toContainText('$400.00')
 
     await page.getByRole('button', { name: 'Previous week' }).click()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
     await page.reload()
     await app.expectDashboard()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
     await expect(app.weekEntry('Rent')).toHaveCount(0)
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
   })
 
   test('only shows a monthly expense in its due week and hides it after payment', async ({
@@ -116,9 +121,11 @@ test.describe('weekly recurring expenses', () => {
 
     await expect(app.weekStat('paid')).toContainText('1 · $75.00')
     await expect(app.weekEntry('Internet')).toHaveCount(0)
+    await expect(app.weekPaidEntry('Internet')).toBeVisible()
 
     await page.getByRole('button', { name: 'Next week' }).click()
     await expect(app.weekEntry('Internet')).toHaveCount(0)
+    await expect(app.weekPaidEntry('Internet')).toHaveCount(0)
     await expect(page.getByText('Nothing due this week.', { exact: true })).toBeVisible()
   })
 
@@ -153,6 +160,8 @@ test.describe('weekly recurring expenses', () => {
     await secondDialog.getByRole('button', { name: 'Mark paid' }).click()
     await expect(app.weekStat('paid')).toContainText('2 · $520.00')
     await expect(page.getByText(/All done for this week/)).toBeVisible()
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
+    await expect(app.weekPaidEntry('Fuel')).toBeVisible()
   })
 
   test('navigates weeks without making transaction requests', async ({ app, page, api }) => {
@@ -191,6 +200,7 @@ test.describe('weekly recurring expenses', () => {
     await expect(dialog.getByRole('button', { name: 'Mark paid' })).toBeEnabled()
     await dialog.getByRole('button', { name: 'Mark paid' }).click()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
   })
 
   test('works in a narrow viewport without horizontal overflow', async ({ app, page }) => {
@@ -210,6 +220,7 @@ test.describe('weekly recurring expenses', () => {
     await app.weekTransaction('Rent payment').click()
     await dialog.getByRole('button', { name: 'Mark paid' }).click()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
 
     const noOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

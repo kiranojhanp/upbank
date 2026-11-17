@@ -180,15 +180,18 @@ console.log('api calls           :', paths.join(', '))
 
 const page2Rendered = text().includes('Older coffee')
 
-// Offline-first UI: a last-synced label, a manual refresh, and an offline state.
+// Offline-first UI: a manual refresh and an offline state.
 const findButton = (label) =>
   Array.from(page.document.querySelectorAll('button')).find(
-    (button) => button.textContent?.trim() === label,
+    (button) =>
+      button.textContent?.trim() === label ||
+      button.getAttribute('aria-label') === label,
   )
 const accountsCount = () =>
   requested.filter((url) => new URL(url, 'http://x').pathname === '/api/v1/accounts').length
 
-console.log('synced label shown  :', /Synced/.test(text()))
+console.log('refresh icon shown  :', Boolean(findButton('Refresh')))
+console.log('sync text absent    :', !page.document.querySelector('.sync-time, .sync-status'))
 
 const beforeRefresh = accountsCount()
 findButton('Refresh')?.click()
@@ -204,7 +207,6 @@ console.log('cache notice shown  :', cacheNoticeShown)
 
 page.dispatchEvent(new Event('offline'))
 await new Promise((resolve) => setTimeout(resolve, 80))
-console.log('offline status      :', text().includes('Offline'))
 console.log('offline disables    :', Boolean(findButton('Refresh')?.disabled))
 console.log('offline note shown  :', text().includes('Offline — showing saved transactions.'))
 

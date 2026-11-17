@@ -19,6 +19,7 @@
     "test:persistence": "vite build --ssr scripts/persistence-smoke.ts --outDir .persistence-smoke --emptyOutDir >/dev/null && node .persistence-smoke/persistence-smoke.js && rm -rf .persistence-smoke",
     "test:render": "node scripts/render-smoke.mjs",
     "test:e2e": "playwright test",
+    "screenshots": "playwright test --config=playwright.screenshots.config.ts",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report"
