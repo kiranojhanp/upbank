@@ -352,21 +352,6 @@ body {
   gap: 0.65rem;
 }
 
-.sync-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.sync-time {
-  font-family: var(--fm);
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--t3);
-}
-
 .cache-note {
   margin: 0;
   font-family: var(--fm);

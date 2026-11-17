@@ -9,7 +9,6 @@ import {
   writeEnvelope,
   writeLastSynced,
 } from '../envelopeStore'
-import { formatRelativeTime } from '../format'
 import { readSettings } from '../settingsStore'
 import type { Account, TransactionFilters } from '../types'
 import { forgetUserData } from '../persistence'
@@ -496,17 +495,6 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
             {!cacheAvailable && (
               <p className="cache-note">Offline cache unavailable — this session only.</p>
             )}
-            <div className="sync-status">
-              <span className="sync-time">
-                {online
-                  ? refreshing
-                    ? 'Syncing…'
-                    : lastSynced
-                      ? `Synced ${formatRelativeTime(lastSynced)}`
-                      : 'Not synced yet'
-                  : 'Offline'}
-              </span>
-            </div>
             <div className="sidebar-actions" role="group" aria-label="Data and session">
               <button
                 type="button"
