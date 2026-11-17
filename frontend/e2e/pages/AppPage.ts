@@ -129,7 +129,28 @@ export class AppPage {
   }
 
   weekEntry(name: string): Locator {
-    return this.page.locator('.week-entry').filter({ hasText: name })
+    return this.page
+      .locator('.week-entry:not(.week-entry-paid)')
+      .filter({ hasText: name })
+  }
+
+  weekPaidEntry(name: string): Locator {
+    return this.page.locator('.week-entry-paid').filter({ hasText: name })
+  }
+
+  async openSettings(): Promise<void> {
+    await this.page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = this.page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(
+      dialog.getByRole('heading', { name: 'Settings', exact: true }),
+    ).toBeVisible()
+  }
+
+  async saveSettings(): Promise<void> {
+    const dialog = this.page.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'Save settings' }).click()
+    await expect(dialog).toHaveCount(0)
   }
 
   /** Open the Spending account once so its transactions are in the local cache. */

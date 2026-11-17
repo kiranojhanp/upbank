@@ -79,6 +79,7 @@ test.describe('backup and restore', () => {
     await expect(page.locator('#week-title')).toContainText('Wed 4 – Tue 10 Nov 2026')
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
     await expect(app.weekEntry('Rent')).toHaveCount(0)
+    await expect(app.weekPaidEntry('Rent')).toBeVisible()
 
     await app.openPlan()
     await expect(app.planRow('Rent')).toBeVisible()

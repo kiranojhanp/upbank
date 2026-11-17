@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { addDaysIso } from '../budget'
 import type { Account } from '../types'
+import type { WeekStartsOn } from '../settingsStore'
 import { useToday } from '../useToday'
 import {
   endOfWeek,
@@ -14,6 +15,7 @@ import { WeekBoard } from './WeekBoard'
 
 interface WeekViewProps {
   uid: string
+  weekStartsOn: WeekStartsOn
   accounts: Account[]
   online: boolean
   onNotify: (label: string, description?: string) => void
@@ -39,6 +41,7 @@ function Chevron({ direction }: { direction: 'left' | 'right' }) {
 
 export function WeekView({
   uid,
+  weekStartsOn,
   accounts,
   online,
   onNotify,
@@ -46,7 +49,10 @@ export function WeekView({
   onSessionExpired,
 }: WeekViewProps) {
   const today = useToday()
-  const currentWeekStart = useMemo(() => startOfWeek(today), [today])
+  const currentWeekStart = useMemo(
+    () => startOfWeek(today, weekStartsOn),
+    [today, weekStartsOn],
+  )
   const [weekStart, setWeekStart] = useState(currentWeekStart)
 
   const days = weekDayCells(weekStart, today)
@@ -57,7 +63,9 @@ export function WeekView({
     <section id="week-section" aria-labelledby="week-title">
       <header className="week-header">
         <div className="week-heading">
-          <p className="week-eyebrow">{weekRelativeLabel(weekStart, today)}</p>
+          <p className="week-eyebrow">
+            {weekRelativeLabel(weekStart, today, weekStartsOn)}
+          </p>
           <h2 id="week-title" className="week-title">
             {formatWeekRange(weekStart)}
           </h2>

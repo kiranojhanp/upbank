@@ -1,10 +1,11 @@
 /**
- * Week-domain helpers for the Wednesday–Tuesday recurring-expense view.
+ * Week-domain helpers for the recurring-expense view.
  *
- * A recurring expense has a start date and a frequency. The occurrence that
- * falls inside a week is what appears in that week's list. Marking it paid
- * records that occurrence; the next occurrence is generated independently, so
- * a weekly expense disappears from this week and appears again next week.
+ * The week can start on any weekday (Wednesday by default). A recurring expense
+ * has a start date and a frequency; the occurrence that falls inside a week is
+ * what appears in that week's list. Marking it paid records that occurrence and
+ * keeps it visible in the week, while the next occurrence is generated
+ * independently.
  */
 import {
   addDaysIso,
@@ -62,12 +63,15 @@ function weekdayShort(iso: string): string {
   return WEEKDAY_SHORT[utcWeekday(iso)] ?? ''
 }
 
-/** The Wednesday on or before `dateIso`. */
-export function startOfWeek(dateIso = localDateIso()): string {
+/**
+ * The configured week-start day on or before `dateIso`.
+ * `weekStartsOn` uses JavaScript weekday numbers (0 = Sunday, 3 = Wednesday).
+ */
+export function startOfWeek(dateIso = localDateIso(), weekStartsOn = 3): string {
   const parts = isoDateParts(dateIso)
   if (!parts) return dateIso
-  // Wed = 3. Thu/Fri/Sat/Sun/Mon/Tue map to 1…6 days back.
-  const offset = (utcWeekday(dateIso) - 3 + 7) % 7
+  const start = ((Math.trunc(weekStartsOn) % 7) + 7) % 7
+  const offset = (utcWeekday(dateIso) - start + 7) % 7
   return addDaysIso(dateIso, -offset)
 }
 
@@ -112,8 +116,12 @@ export function weekDayCells(weekStart: string, todayIso: string): WeekDayCell[]
 }
 
 /** "This week", "Next week", "3 weeks ago"… */
-export function weekRelativeLabel(weekStart: string, todayIso = localDateIso()): string {
-  const difference = daysBetweenIso(startOfWeek(todayIso), weekStart)
+export function weekRelativeLabel(
+  weekStart: string,
+  todayIso = localDateIso(),
+  weekStartsOn = 3,
+): string {
+  const difference = daysBetweenIso(startOfWeek(todayIso, weekStartsOn), weekStart)
   if (difference === 0) return 'This week'
   if (difference === 7) return 'Next week'
   if (difference === -7) return 'Last week'

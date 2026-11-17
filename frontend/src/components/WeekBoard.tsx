@@ -22,6 +22,22 @@ interface WeekBoardProps {
   onSessionExpired: () => void
 }
 
+function CheckIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 12.5l4.5 4.5L19 7" />
+    </svg>
+  )
+}
+
 function PlusIcon() {
   return (
     <svg
@@ -59,8 +75,9 @@ export function WeekBoard({
     [planRows, paid, weekStart, weekEnd],
   )
   const selectedOccurrence =
-    summary.due.find((occurrence) => occurrence.key === selectedKey) ??
+    summary.occurrences.find((occurrence) => occurrence.key === selectedKey) ??
     summary.due[0] ??
+    summary.occurrences[0] ??
     null
 
   const usedTransactions = useMemo(() => {
@@ -152,7 +169,7 @@ export function WeekBoard({
       </div>
 
       <div className="week-board">
-        <aside className="week-pane week-entries-pane" aria-label="Recurring expenses due">
+        <aside className="week-pane week-entries-pane" aria-label="Recurring expenses this week">
           <div className="week-pane-head">
             <div>
               <h3>Due this week</h3>
@@ -218,6 +235,51 @@ export function WeekBoard({
               })}
             </div>
           )}
+
+          {paidCount > 0 && (
+            <section className="week-paid-block" aria-labelledby="week-paid-title">
+              <div className="week-paid-head">
+                <div>
+                  <h3 id="week-paid-title">Paid this week</h3>
+                  <p>
+                    {paidCount} {paidCount === 1 ? 'expense' : 'expenses'} ·{' '}
+                    {formatMoney(summary.paidCents)}
+                  </p>
+                </div>
+              </div>
+              <div className="week-paid-list">
+                {summary.paid.map((occurrence) => {
+                  const isSelected = selectedOccurrence?.key === occurrence.key
+                  return (
+                    <button
+                      key={occurrence.key}
+                      type="button"
+                      className={`week-entry week-entry-paid${isSelected ? ' is-selected' : ''}`}
+                      aria-pressed={isSelected}
+                      onClick={() => selectOccurrence(occurrence)}
+                    >
+                      <span className="week-entry-top">
+                        <span className="week-entry-name">{occurrence.expense.name}</span>
+                        <span className="week-entry-remaining">
+                          {formatMoney(occurrence.expense.amountCents)}
+                        </span>
+                      </span>
+                      <span className="week-entry-meta">
+                        <span>
+                          {FREQUENCY_SPECS[occurrence.expense.frequency].label} ·{' '}
+                          {formatWeekDay(occurrence.date)}
+                        </span>
+                        <span className="week-paid-badge">
+                          <CheckIcon />
+                          Paid
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          )}
         </aside>
 
         {selectedOccurrence ? (
@@ -228,7 +290,9 @@ export function WeekBoard({
           >
             <header className="week-detail-head">
               <div>
-                <p className="week-detail-eyebrow">Recurring expense</p>
+                <p className="week-detail-eyebrow">
+                  {selectedOccurrence.paid ? 'Paid this week' : 'Recurring expense'}
+                </p>
                 <h3 id="week-detail-title" className="week-detail-title">
                   {selectedOccurrence.expense.name}
                 </h3>
@@ -261,29 +325,40 @@ export function WeekBoard({
               </div>
             </div>
 
-            <section className="week-detail-section week-pay-section">
-              <p className="week-pay-hint">
-                Marking this paid asks you to choose the Up transaction that paid it. The
-                occurrence then leaves this week, and the next one appears in its own
-                week.
-              </p>
-              <button
-                type="button"
-                className="plan-btn plan-btn-primary week-pay-btn"
-                onClick={() => setPickerFor(selectedOccurrence)}
-              >
-                Mark paid
-              </button>
-            </section>
+            {selectedOccurrence.paid ? (
+              <section className="week-detail-section week-paid-section">
+                <p className="week-paid-status">
+                  <span className="week-paid-status-icon">
+                    <CheckIcon />
+                  </span>
+                  Paid this week
+                </p>
+                <p className="week-pay-hint">
+                  This occurrence stays in the week for reference. The next occurrence
+                  appears in its own week.
+                </p>
+              </section>
+            ) : (
+              <section className="week-detail-section week-pay-section">
+                <p className="week-pay-hint">
+                  Marking this paid asks you to choose the Up transaction that paid it.
+                  It then moves under “Paid this week” so you can still see it, and the
+                  next occurrence appears in its own week.
+                </p>
+                <button
+                  type="button"
+                  className="plan-btn plan-btn-primary week-pay-btn"
+                  onClick={() => setPickerFor(selectedOccurrence)}
+                >
+                  Mark paid
+                </button>
+              </section>
+            )}
           </article>
         ) : (
           <div className="week-pane week-detail week-detail-empty">
-            <p className="week-detail-eyebrow">All clear</p>
-            <p>
-              {paidCount > 0
-                ? `${paidLabel} paid this week. The next occurrences will appear in their own weeks.`
-                : 'Nothing due this week. Add recurring expenses or move to another week.'}
-            </p>
+            <p className="week-detail-eyebrow">Nothing scheduled</p>
+            <p>No recurring expenses fall in this week.</p>
             <button
               type="button"
               className="plan-btn plan-btn-ghost"
@@ -299,6 +374,8 @@ export function WeekBoard({
         <MarkPaidDialog
           key={pickerFor.key}
           occurrence={pickerFor}
+          weekStart={weekStart}
+          weekEnd={weekEnd}
           accounts={accounts}
           online={online}
           usedTransactions={usedTransactions}

@@ -90,9 +90,8 @@ export const api = {
   },
 
   /**
-   * Every transaction in a date window for one account, following Up's cursor
-   * to completion. The week view asks each account for its Wednesday–Tuesday
-   * slice; page size 100 keeps a normal week to one request per account.
+   * Every transaction for one account, following Up's cursor to completion.
+   * Used only by the explicit Load/Refresh from Up action in Mark Paid.
    */
   async allTransactions(
     accountId: string,

@@ -1,5 +1,5 @@
-// Checks for src/week.ts and src/paidStore.ts: Wed–Tue ranges, occurrence
-// generation from a start date, the due/paid summary and paid-record validation.
+// Checks for src/week.ts, src/settingsStore.ts and src/paidStore.ts: week ranges,
+// configurable week starts, occurrence generation, due/paid summary and paid validation.
 import type { PlanRow } from '../src/budget'
 import {
   endOfWeek,
@@ -12,6 +12,7 @@ import {
   weekRelativeLabel,
 } from '../src/week'
 import { paidKey, sanitizePaidFile, type PaidMap } from '../src/paidStore'
+import { DEFAULT_SETTINGS, sanitizeSettings } from '../src/settingsStore'
 
 let ok = true
 function check(label: string, condition: boolean) {
@@ -45,6 +46,22 @@ equal('other days are not today', days[0].isToday, false)
 equal('current relative label', weekRelativeLabel('2026-11-04', '2026-11-05'), 'This week')
 equal('next relative label', weekRelativeLabel('2026-11-11', '2026-11-05'), 'Next week')
 equal('last relative label', weekRelativeLabel('2026-10-28', '2026-11-05'), 'Last week')
+
+// ---------------------------------------------------------------------------
+// Configurable week start
+// ---------------------------------------------------------------------------
+equal('default week starts Wednesday', DEFAULT_SETTINGS.weekStartsOn, 3)
+equal('Monday week start', startOfWeek('2026-11-05', 1), '2026-11-02')
+equal('Sunday is its own start', startOfWeek('2026-11-01', 0), '2026-11-01')
+equal('Saturday week start', startOfWeek('2026-11-07', 6), '2026-11-07')
+equal('Monday range label', formatWeekRange('2026-11-02'), 'Mon 2 – Sun 8 Nov 2026')
+equal('relative label uses Monday start', weekRelativeLabel('2026-11-02', '2026-11-05', 1), 'This week')
+equal('next relative label uses Monday start', weekRelativeLabel('2026-11-09', '2026-11-05', 1), 'Next week')
+
+check('settings sanitize valid', sanitizeSettings({ version: 1, weekStartsOn: 1 })?.weekStartsOn === 1)
+check('settings reject out of range', sanitizeSettings({ version: 1, weekStartsOn: 7 }) === null)
+check('settings reject wrong version', sanitizeSettings({ version: 2, weekStartsOn: 1 }) === null)
+check('settings reject non-object', sanitizeSettings(null) === null)
 
 // ---------------------------------------------------------------------------
 // Occurrences from a start date

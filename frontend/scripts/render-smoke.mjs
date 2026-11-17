@@ -183,7 +183,9 @@ const page2Rendered = text().includes('Older coffee')
 // Offline-first UI: a last-synced label, a manual refresh, and an offline state.
 const findButton = (label) =>
   Array.from(page.document.querySelectorAll('button')).find(
-    (button) => button.textContent?.trim() === label,
+    (button) =>
+      button.textContent?.trim() === label ||
+      button.getAttribute('aria-label') === label,
   )
 const accountsCount = () =>
   requested.filter((url) => new URL(url, 'http://x').pathname === '/api/v1/accounts').length

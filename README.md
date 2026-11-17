@@ -5,10 +5,11 @@ weekly budgeting workspace. It is a **static, frontend-only** React single-page 
 browser talks to the Up API directly and caches what it fetches on the device. There is no
 server to run.
 
-The budgeting side opens on the current **Wednesday–Tuesday** week. It lists the recurring
-expenses whose occurrence falls in that week. Marking one paid asks you to choose the Up
-transaction that paid it; the occurrence then leaves the week, and the next occurrence
-appears in its own week.
+The budgeting side opens on the current week — **Wednesday–Tuesday by default**, with the
+start day configurable in Settings. It lists the recurring expenses whose occurrence falls
+in that week. Marking one paid asks you to choose the Up transaction that paid it; the
+occurrence then moves under **Paid this week** so you can still see it, and the next
+occurrence appears in its own week.
 
 > Not affiliated with Up. Your personal access token can read and categorise your banking
 > data — use at your own risk, ideally with a short-lived token.
@@ -26,11 +27,14 @@ appears in its own week.
 ## Features
 
 - Sign in with your Up Banking Personal Access Token
-- Weekly recurring expenses (the home view): a Wednesday–Tuesday calendar with
-  previous/next week, the expenses due in that week, due/paid totals and the plan's weekly
-  set-aside. Mark paid asks for the Up account, lists that account's cached transactions
-  and validates a matching debit; the paid occurrence leaves the week, and the next
-  occurrence appears in its own week
+- Weekly recurring expenses (the home view): a configurable week calendar
+  (Wednesday–Tuesday by default) with previous/next week, due and paid sections, due/paid
+  totals and the plan's weekly set-aside. Mark paid asks for the Up account, lists that
+  account's cached transactions and validates a matching debit; the paid occurrence stays
+  visible under Paid this week while the next occurrence appears in its own week
+- Settings dialog: set which day the week starts on, with a live week preview. The sidebar
+  action row also has a settings icon and a refresh icon whose tooltip shows when data was
+  last synced
 - Recurring expenses (the set-aside template): start date + frequency, weekly set-aside,
   one-off catch-up, fortnightly split and annual total; add, edit, bulk-select and delete,
   or import/export Google Sheets/CSV. Legacy "Next Due Date" sheets are accepted as start
@@ -111,9 +115,10 @@ infinite query and mirrored into a local-only TanStack DB collection:
 ### Weekly recurring expenses
 
 Each plan row has a **start date** and a frequency. An occurrence is generated at the first
-eligible date on or after the week's Wednesday; because the fastest frequency is weekly,
-there is at most one occurrence per expense per week. The Week view lists the unpaid
-occurrences for the selected week, sorted by due date and then plan order.
+eligible date on or after the week's start day (Wednesday by default, configurable in
+Settings); because the fastest frequency is weekly, there is at most one occurrence per
+expense per week. The Week view lists unpaid occurrences under **Due this week** and paid
+ones under **Paid this week**, both sorted by due date and then plan order.
 
 Marking an occurrence paid opens a transaction picker. It asks for the Up account and
 reads that account's **persisted transaction collection locally** — changing weeks or
@@ -124,10 +129,10 @@ occurrence. Credits, mismatched amounts and reused transactions are rejected wit
 inline error; pending/outside-week selections are warned about but can still be saved.
 If the account has no cached transactions yet, a **Load from Up** button fetches that
 account once, stores the rows locally, and then the picker works from the local list. A
-paid occurrence is hidden from that week. The next occurrence is generated independently,
-so:
+paid occurrence stays visible under **Paid this week**. The next occurrence is generated
+independently, so:
 
-- a weekly expense disappears this week and returns next week;
+- a weekly expense moves to Paid this week and returns next week;
 - a fortnightly expense returns two weeks later;
 - a monthly, quarterly or annual expense returns at its next period.
 
@@ -451,7 +456,7 @@ frontend/
     db-smoke.mjs         Data-layer test against the real TanStack DB packages
     csv-check.ts         CSV columns, escaping and formula-injection guard
     budget-check.ts      Plan formula parity, date handling, import and validation
-    week-check.ts        Wed–Tue maths, start-date occurrences, due/paid totals, paid validation
+    week-check.ts        Week maths, configurable starts, occurrences, due/paid totals, paid validation
     backup-check.ts      Backup round-trip, validation and exclusion of token/content
     persistence-smoke.ts Cache fallback when OPFS is unavailable
     security-check.ts    Token input validation
@@ -469,7 +474,8 @@ frontend/
     envelopeStore.ts     Cursor, category map, oldest timestamp and cache TTL
     budget.ts            Plan maths, date/frequency handling and Sheets/CSV import/export
     planStore.ts         Per-user set-aside plan in localStorage (validation, write, clear)
-    week.ts              Wed–Tue helpers, start-date occurrences, due/paid summary
+    week.ts              Week helpers, configurable starts, occurrences, due/paid summary
+    settingsStore.ts     Per-user app settings (week start day), validation and storage
     paidStore.ts         Paid occurrence records (expense/date → transaction id)
     backup.ts            Versioned plan + paid-history JSON export/import and validation
     useToday.ts          Local date, refreshed across midnight for week and due dates
@@ -490,8 +496,9 @@ frontend/
       TransactionItem.tsx
       DetailPanel.tsx
       Filters.tsx
-      WeekView.tsx        Wed–Tue calendar, week navigation and summaries
-      WeekBoard.tsx       Due list, selected-occurrence detail and mark-paid flow
+      WeekView.tsx        Configurable week calendar, week navigation and summaries
+      WeekBoard.tsx       Due/paid lists, selected-occurrence detail and mark-paid flow
+      SettingsDialog.tsx  Week-start setting with live preview
       MarkPaidDialog.tsx  Local account picker and validation for marking paid
       PlanView.tsx        Recurring expense management, bulk selection and totals
       PlanFormDialog.tsx  Add/edit an expense with start date and weekly preview
@@ -553,7 +560,7 @@ npm run build
 npm run test:db          # collections, select, orderBy, pagination, teardown
 npm run test:csv         # CSV columns, escaping, formula-injection guard
 npm run test:budget      # Sheet formula parity, dates, import parsing, plan validation
-npm run test:week        # Wed–Tue weeks, start-date occurrences, due/paid totals, paid validation
+npm run test:week        # Week starts, occurrences, due/paid totals, paid validation
 npm run test:backup      # backup round-trip, validation, no token or transaction content
 npm run test:security    # token input validation and control-character rejection
 npm run test:pagination  # cursor anchoring, dedupe, exhausted restored cache
@@ -584,7 +591,8 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
 | `resilience.spec.ts` | empty account state and the mobile navigation drawer |
 | `plan.spec.ts` | recurring plan maths, start dates, bulk delete, import/export, mobile access |
-| `week.spec.ts` | due occurrences, local account picker, amount/credit/reuse validation, no week-change requests, paid hiding, recurrence, narrow layout |
+| `week.spec.ts` | due/paid occurrences, local account picker, amount/credit/reuse validation, no week-change requests, recurrence, narrow layout |
+| `settings.spec.ts` | week-start change, live preview, persisted reload and reset to Wednesday |
 | `backup.spec.ts` | export plan/paid without the token, clear local state, restore in a fresh session |
 
 The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel
