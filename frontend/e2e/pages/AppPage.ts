@@ -132,6 +132,19 @@ export class AppPage {
     return this.page.locator('.week-entry').filter({ hasText: name })
   }
 
+  /** Open the Spending account once so its transactions are in the local cache. */
+  async cacheTransactions(accountName = 'Spending'): Promise<void> {
+    await this.selectAccount(accountName)
+    await this.expectTransaction('Coffee')
+    await this.waitForOfflineData()
+    await this.openWeek()
+  }
+
+  async selectPaidAccount(name = 'Spending'): Promise<void> {
+    const dialog = this.page.getByRole('dialog')
+    await dialog.getByLabel('Up account').selectOption({ label: name })
+  }
+
   weekStat(stat: 'due' | 'paid' | 'setaside'): Locator {
     return this.page.locator(`[data-week-stat="${stat}"]`)
   }

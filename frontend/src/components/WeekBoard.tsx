@@ -2,14 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { FREQUENCY_SPECS, formatCalendarDate, formatMoney } from '../budget'
 import { PAID_PREFIX, markPaid, readPaid, type PaidMap } from '../paidStore'
 import { PLAN_PREFIX, readPlan } from '../planStore'
-import type { Account } from '../types'
-import { useWeekTransactions } from '../useWeekTransactions'
+import type { Account, Transaction } from '../types'
 import {
   formatWeekDay,
   nextDateAfterOccurrence,
   summariseWeek,
   type WeekOccurrence,
-  type WeekTransaction,
 } from '../week'
 import { MarkPaidDialog } from './MarkPaidDialog'
 
@@ -56,13 +54,6 @@ export function WeekBoard({
   const [announcement, setAnnouncement] = useState('')
   const detailRef = useRef<HTMLElement | null>(null)
 
-  const week = useWeekTransactions({
-    accounts,
-    weekStart,
-    weekEnd,
-    online,
-    onSessionExpired,
-  })
   const summary = useMemo(
     () => summariseWeek(planRows, paid, weekStart, weekEnd),
     [planRows, paid, weekStart, weekEnd],
@@ -103,7 +94,7 @@ export function WeekBoard({
     }
   }
 
-  function handleMarkPaid(transaction: WeekTransaction) {
+  function handleMarkPaid(transaction: Transaction) {
     if (!pickerFor) return
     const saved = markPaid(
       uid,
@@ -308,14 +299,12 @@ export function WeekBoard({
         <MarkPaidDialog
           key={pickerFor.key}
           occurrence={pickerFor}
-          transactions={week.transactions}
-          loading={week.loading}
-          error={week.error}
+          accounts={accounts}
           online={online}
           usedTransactions={usedTransactions}
-          onRefresh={() => void week.refetch()}
           onClose={() => setPickerFor(null)}
           onConfirm={handleMarkPaid}
+          onSessionExpired={onSessionExpired}
         />
       )}
     </>

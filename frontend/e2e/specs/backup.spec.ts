@@ -10,6 +10,7 @@ test.describe('backup and restore', () => {
     await app.freezeToday('2026-11-05T02:00:00.000Z')
     await app.login()
     await app.expectDashboard()
+    await app.cacheTransactions()
 
     await app.openPlan()
     await app.addExpense({
@@ -23,7 +24,8 @@ test.describe('backup and restore', () => {
     await app.weekEntry('Rent').click()
     await page.getByRole('button', { name: 'Mark paid', exact: true }).click()
     const paidDialog = page.getByRole('dialog')
-    await app.weekTransaction('Coffee').click()
+    await app.selectPaidAccount('Spending')
+    await app.weekTransaction('Rent payment').click()
     await paidDialog.getByRole('button', { name: 'Mark paid' }).click()
     await expect(app.weekStat('paid')).toContainText('1 · $400.00')
 

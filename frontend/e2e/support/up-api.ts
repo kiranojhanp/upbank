@@ -132,7 +132,40 @@ const INTERNET_PAYMENT = {
   },
 }
 
-const FIRST_PAGE = [COFFEE, GROCERIES, SALARY, PENDING, FORMULA, INTERNET_PAYMENT]
+const RENT_PAYMENT = {
+  id: 'tx-rent',
+  type: 'transactions',
+  attributes: {
+    description: 'Rent payment',
+    createdAt: '2026-11-05T07:00:00Z',
+    settledAt: '2026-11-05T07:00:01Z',
+    status: 'SETTLED',
+    amount: { value: '-400.00', currencyCode: 'AUD', valueInBaseUnits: -40000 },
+  },
+}
+
+const FUEL_PAYMENT = {
+  id: 'tx-fuel',
+  type: 'transactions',
+  attributes: {
+    description: 'Fuel payment',
+    createdAt: '2026-11-05T08:30:00Z',
+    settledAt: '2026-11-05T08:30:01Z',
+    status: 'SETTLED',
+    amount: { value: '-120.00', currencyCode: 'AUD', valueInBaseUnits: -12000 },
+  },
+}
+
+const FIRST_PAGE = [
+  COFFEE,
+  GROCERIES,
+  SALARY,
+  PENDING,
+  FORMULA,
+  INTERNET_PAYMENT,
+  RENT_PAYMENT,
+  FUEL_PAYMENT,
+]
 const SECOND_PAGE = [OLDER_COFFEE]
 
 const NEXT_PAGE_URL =

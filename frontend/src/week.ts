@@ -34,17 +34,6 @@ const MONTH_SHORT = [
   'Dec',
 ]
 
-/** A debit transaction, normalised for the week view and paid picker. */
-export interface WeekTransaction {
-  id: string
-  description: string
-  createdAt: string
-  /** Positive number of cents spent (Up reports debits as negative values). */
-  amountCents: number
-  accountName: string
-  status: string
-}
-
 export interface WeekOccurrence {
   expense: PlanRow
   date: string
