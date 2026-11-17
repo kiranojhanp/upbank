@@ -19,3 +19,7 @@ frontend/.pagination-check/
 .venv/
 .env
 .sessions.sqlite3*
+
+# Playwright artifacts when commands run from the repo root
+test-results/
+playwright-report/
