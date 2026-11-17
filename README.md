@@ -57,6 +57,25 @@ occurrence appears in its own week.
 - Background balance sync on reconnect, on returning to the tab, from a Refresh button, and
   from a slow account poll; Refresh also refetches every loaded transaction page
 
+## Screenshots
+
+All screenshots below are generated from the **Playwright fake Up API with synthetic data**.
+Regenerate them from `frontend/` with:
+
+```bash
+npm run screenshots
+```
+
+| Week — due | Week — paid entries |
+| --- | --- |
+| ![Week view showing four due recurring expenses](docs/screenshots/week-due.png) | ![Week view showing a paid Rent occurrence and remaining dues](docs/screenshots/week-paid.png) |
+| **Recurring expenses** | **Mark paid validation** |
+| ![Recurring expenses list with synthetic plan rows](docs/screenshots/plan.png) | ![Mark paid picker showing an amount mismatch error](docs/screenshots/mark-paid.png) |
+| **Settings** | **Accounts** |
+| ![Settings dialog with Monday selected as the week start](docs/screenshots/settings.png) | ![Spending account with synthetic transactions](docs/screenshots/accounts.png) |
+| **Week starting Monday** | **Mobile week view** |
+| ![Week view starting on Monday](docs/screenshots/week-monday.png) | <img src="docs/screenshots/week-mobile.png" alt="Mobile week view" width="360" /> |
+
 ## How it works
 
 ### Direct to the Up API
@@ -434,19 +453,22 @@ try_files $uri /index.html;
 ```
 README.md
 .gitignore
+docs/screenshots/       Playwright-generated README images (synthetic data)
 .github/workflows/ci.yml  Lint, typecheck, build, unit tests and Playwright in CI
 .github/workflows/deploy.yml  Build with the Pages base path and publish gh-pages
 frontend/
   index.html             Vite entry point (CSP meta and manifest link)
   vite.config.ts         Tailwind, SQLite assets, CSP/security headers, service worker
   playwright.config.ts   Chromium project, production preview web server, traces
+  playwright.screenshots.config.ts  Dedicated screenshot project for README images
   tsconfig.e2e.json      Typecheck config for the e2e sources
   components.json        shadcn/ui CLI configuration
   e2e/
     fixtures.ts          Per-test Up API mock + app page object
     pages/AppPage.ts     Role-based app page object
     support/up-api.ts    Stateful fake of the Up API
-    specs/               auth, transactions, weekly recurring expenses, backup, offline/PWA, security, responsive
+    specs/               auth, transactions, weekly recurring expenses, backup, settings, offline/PWA, security, responsive
+    screenshots/capture.ts  README screenshots with synthetic plans and transactions
   public/
     fonts/               Self-hosted woff2 fonts (no third-party origin)
     manifest.webmanifest Web app manifest
@@ -571,6 +593,7 @@ npm run test:render      # production bundle in happy-dom: boot → accounts →
 
 npm run typecheck:e2e    # typecheck the Playwright sources
 npm run test:e2e         # real Chromium against the production build
+npm run screenshots      # regenerate docs/screenshots from synthetic data
 ```
 
 `test:render` runs against `dist`, so build first. The first e2e run also needs a
