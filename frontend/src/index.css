@@ -3188,6 +3188,10 @@ button.balance-toggle-btn {
 .mark-paid-list::-webkit-scrollbar { width: 4px; }
 .mark-paid-list::-webkit-scrollbar-thumb { background: var(--line-b); border-radius: 4px; }
 
+.mark-paid-row .week-tx-date {
+  width: 4.75rem;
+  white-space: nowrap;
+}
 .mark-paid-row:disabled { opacity: 0.5; cursor: not-allowed; }
 .mark-paid-row.is-selected {
   background: var(--up-dim);
@@ -3378,6 +3382,78 @@ button.balance-toggle-btn {
   .backup-actions .plan-btn { width: 100%; }
   .backup-file-name { max-width: 100%; }
   .backup-preview .plan-btn { width: 100%; }
+}
+
+
+.mark-paid-account {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.mark-paid-account > span {
+  color: var(--t2);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mark-paid-empty {
+  padding: 0.45rem 0 0.2rem;
+  color: var(--t3);
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.mark-paid-error {
+  margin: 0.5rem 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(255,69,96,0.18);
+  border-radius: 8px;
+  background: rgba(255,69,96,0.05);
+}
+.mark-paid-error p {
+  color: #FF8A9B;
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+.mark-paid-error .week-refresh { margin-top: 0.45rem; }
+
+.mark-paid-validation {
+  margin-top: 0.65rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--t3);
+  font-size: 0.68rem;
+  line-height: 1.55;
+  background: var(--lift);
+}
+.mark-paid-validation.is-hint { color: var(--t3); }
+.mark-paid-validation.is-error {
+  color: #FF8A9B;
+  border-color: rgba(255,69,96,0.18);
+  background: rgba(255,69,96,0.05);
+}
+.mark-paid-validation.is-ok {
+  color: var(--green);
+  border-color: rgba(14,204,122,0.18);
+  background: rgba(14,204,122,0.05);
+}
+
+.mark-paid-warning {
+  margin-top: 0.35rem;
+  color: #FFB800;
+  font-size: 0.65rem;
+  line-height: 1.5;
+}
+
+.week-tx-amount.credit { color: var(--green); }
+
+@media (max-width: 600px) {
+  .mark-paid-account { margin-bottom: 0.65rem; }
+  .mark-paid-validation { font-size: 0.64rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

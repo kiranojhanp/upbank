@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
+import { useForm } from '@tanstack/react-form'
 import { ApiError, api } from '../api'
 import { MAX_TOKEN_LENGTH, tokenInputError } from '../security'
 import { UpLogo } from './UpLogo'
@@ -9,37 +10,34 @@ interface LoginProps {
 }
 
 export function Login({ initialError, onSuccess }: LoginProps) {
-  const [token, setToken] = useState('')
   const [error, setError] = useState<string | null>(initialError ?? null)
   const [loading, setLoading] = useState(false)
+
+  const form = useForm({
+    defaultValues: { accessToken: '' },
+    validators: {
+      onSubmit: ({ value }) => tokenInputError(value.accessToken.trim()),
+    },
+    onSubmit: async ({ value }) => {
+      setLoading(true)
+      setError(null)
+      try {
+        const { uid } = await api.login(value.accessToken.trim())
+        // Do not keep the secret in component state after it has been stored.
+        form.reset()
+        await onSuccess(uid)
+      } catch (cause) {
+        setError(cause instanceof ApiError ? cause.message : 'Could not sign in')
+      } finally {
+        setLoading(false)
+      }
+    },
+  })
 
   useEffect(() => {
     document.body.classList.add('login-page')
     return () => document.body.classList.remove('login-page')
   }, [])
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const value = token.trim()
-    const invalid = tokenInputError(value)
-    if (invalid) {
-      setError(invalid)
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    try {
-      const { uid } = await api.login(value)
-      // Do not keep the secret in component state after it has been stored.
-      setToken('')
-      await onSuccess(uid)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not sign in')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <>
@@ -58,27 +56,48 @@ export function Login({ initialError, onSuccess }: LoginProps) {
           </div>
         </div>
 
-        {error && <div className="login-error">{error}</div>}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            void form.handleSubmit()
+          }}
+          className="login-form"
+        >
+          <form.Subscribe selector={(state) => state.errorMap.onSubmit}>
+            {(submitError) =>
+              error || submitError ? (
+                <div className="login-error">{error ?? String(submitError)}</div>
+              ) : null
+            }
+          </form.Subscribe>
 
-        <form onSubmit={handleSubmit} className="login-form">
           {/* Do not let a password manager offer the Up account password here:
               the app needs a personal access token, not a login. */}
-          <input
-            type="password"
-            name="accessToken"
-            placeholder="Personal Access Token"
-            required
-            className="token-input"
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            inputMode="text"
-            maxLength={MAX_TOKEN_LENGTH}
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            disabled={loading}
-          />
+          <form.Field name="accessToken">
+            {(field) => (
+              <input
+                type="password"
+                name={field.name}
+                placeholder="Personal Access Token"
+                required
+                className="token-input"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="text"
+                maxLength={MAX_TOKEN_LENGTH}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => {
+                  setError(null)
+                  field.handleChange(event.target.value)
+                }}
+                disabled={loading}
+              />
+            )}
+          </form.Field>
           <button type="submit" className="login-btn" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in to Up'}
           </button>

@@ -17,6 +17,7 @@ appears in its own week.
 
 - **React 19 + TypeScript + Vite** — the app shell
 - **TanStack Query + TanStack DB** — infinite-query pagination with local-first row collections
+- **TanStack Form** — typed form state, field validation and submit handling for every user-input form
 - **OPFS SQLite** (`wa-sqlite`) — a durable, per-user cache of those collections
 - **Tailwind CSS v4 + shadcn/ui** — styling and primitives
 - **Playwright** — real-browser end-to-end tests against the production build
@@ -27,8 +28,9 @@ appears in its own week.
 - Sign in with your Up Banking Personal Access Token
 - Weekly recurring expenses (the home view): a Wednesday–Tuesday calendar with
   previous/next week, the expenses due in that week, due/paid totals and the plan's weekly
-  set-aside. Mark paid opens this week's Up debit transactions; the paid occurrence leaves
-  the week, and the next occurrence appears in its own week
+  set-aside. Mark paid asks for the Up account, lists that account's cached transactions
+  and validates a matching debit; the paid occurrence leaves the week, and the next
+  occurrence appears in its own week
 - Recurring expenses (the set-aside template): start date + frequency, weekly set-aside,
   one-off catch-up, fortnightly split and annual total; add, edit, bulk-select and delete,
   or import/export Google Sheets/CSV. Legacy "Next Due Date" sheets are accepted as start
@@ -113,20 +115,28 @@ eligible date on or after the week's Wednesday; because the fastest frequency is
 there is at most one occurrence per expense per week. The Week view lists the unpaid
 occurrences for the selected week, sorted by due date and then plan order.
 
-Marking an occurrence paid opens a transaction picker. It fetches the week's **debit**
-transactions across every Up account and requires choosing one before the payment is
-recorded. A paid occurrence is hidden from that week. The next occurrence is generated
-independently, so:
+Marking an occurrence paid opens a transaction picker. It asks for the Up account and
+reads that account's **persisted transaction collection locally** — changing weeks or
+opening the picker makes no transaction request. All cached transactions for the account
+are listed, including credits and pending entries, and the payment is saved only when a
+debit has the exact same amount as the expense and has not already paid another
+occurrence. Credits, mismatched amounts and reused transactions are rejected with an
+inline error; pending/outside-week selections are warned about but can still be saved.
+If the account has no cached transactions yet, a **Load from Up** button fetches that
+account once, stores the rows locally, and then the picker works from the local list. A
+paid occurrence is hidden from that week. The next occurrence is generated independently,
+so:
 
 - a weekly expense disappears this week and returns next week;
 - a fortnightly expense returns two weeks later;
 - a monthly, quarterly or annual expense returns at its next period.
 
 The paid record is keyed by expense id + occurrence date and stores the transaction id only.
-Descriptions, amounts and account names are read live for the week and are never written
-into `up:paid:<uid>`. Paid records are capped at 5,000, and deleting an expense or the plan
-removes its paid history. Offline, the due list remains usable from the plan, but marking
-paid waits for the transaction list.
+Descriptions, amounts and account names are read from the local transaction collection for
+the picker and are never written into `up:paid:<uid>`. Paid records are capped at 5,000,
+and deleting an expense or the plan removes its paid history. Offline, the due list remains
+usable from the plan and a cached account can still be paid; loading an uncached account
+waits for a connection.
 
 ### The set-aside plan
 
@@ -175,6 +185,13 @@ paid records whose expense is not in the backup, reports any invalid rows, then 
 app. The file is versioned and can be restored later from the same dialog. It contains
 budget names/amounts and paid transaction ids — not transaction descriptions or amounts —
 so treat the downloaded file as sensitive.
+
+### Forms
+
+Every data-entry surface uses `@tanstack/react-form`: login, account filters, the
+recurring-expense editor, CSV import, Mark Paid and backup restore. Fields own their values
+and validation, forms own submission, and the existing accessible labels/classes are kept so
+the UI and browser tests stay stable.
 
 ### The local cache (OPFS SQLite)
 
@@ -455,7 +472,6 @@ frontend/
     week.ts              Wed–Tue helpers, start-date occurrences, due/paid summary
     paidStore.ts         Paid occurrence records (expense/date → transaction id)
     backup.ts            Versioned plan + paid-history JSON export/import and validation
-    useWeekTransactions.ts  Week-window debit transaction query across all accounts
     useToday.ts          Local date, refreshed across midnight for week and due dates
     download.ts          Blob download helper shared by the CSV exports
     pagination.ts        Pure page-param/dedupe helpers for the infinite query
@@ -476,7 +492,7 @@ frontend/
       Filters.tsx
       WeekView.tsx        Wed–Tue calendar, week navigation and summaries
       WeekBoard.tsx       Due list, selected-occurrence detail and mark-paid flow
-      MarkPaidDialog.tsx  Pick the Up transaction that paid an occurrence
+      MarkPaidDialog.tsx  Local account picker and validation for marking paid
       PlanView.tsx        Recurring expense management, bulk selection and totals
       PlanFormDialog.tsx  Add/edit an expense with start date and weekly preview
       PlanImportDialog.tsx Paste/CSV import with row-level validation
@@ -568,7 +584,7 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
 | `resilience.spec.ts` | empty account state and the mobile navigation drawer |
 | `plan.spec.ts` | recurring plan maths, start dates, bulk delete, import/export, mobile access |
-| `week.spec.ts` | due occurrences, transaction picker, paid hiding, next-week recurrence, persistence, narrow layout |
+| `week.spec.ts` | due occurrences, local account picker, amount/credit/reuse validation, no week-change requests, paid hiding, recurrence, narrow layout |
 | `backup.spec.ts` | export plan/paid without the token, clear local state, restore in a fresh session |
 
 The config starts `vite preview` on port 4173 after a fresh build, runs tests in parallel

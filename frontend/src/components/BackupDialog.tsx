@@ -1,4 +1,5 @@
-import { useState, type ChangeEvent } from 'react'
+import { useState } from 'react'
+import { useForm } from '@tanstack/react-form'
 import { localDateIso } from '../budget'
 import { createBackup, parseBackup, type BackupData } from '../backup'
 import { downloadBlob } from '../download'
@@ -12,6 +13,7 @@ interface BackupDialogProps {
 }
 
 const MAX_BACKUP_BYTES = 5_000_000
+const FORM_ID = 'backup-import-form'
 
 export function BackupDialog({ uid, onClose }: BackupDialogProps) {
   const [planCount, setPlanCount] = useState(() => readPlan(uid).rows.length)
@@ -21,6 +23,11 @@ export function BackupDialog({ uid, onClose }: BackupDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+
+  const form = useForm({
+    defaultValues: { backupFile: null as File | null },
+    onSubmit: () => handleImport(),
+  })
 
   function handleExport() {
     const plan = readPlan(uid)
@@ -36,9 +43,7 @@ export function BackupDialog({ uid, onClose }: BackupDialogProps) {
     setError(null)
   }
 
-  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
+  async function readBackupFile(file: File | null) {
     setFileName(null)
     setParsed(null)
     setStatus(null)
@@ -140,54 +145,73 @@ export function BackupDialog({ uid, onClose }: BackupDialogProps) {
           Restores the plan and paid history for the account signed in on this browser.
           This replaces what is currently stored here.
         </p>
-        <div className="backup-actions">
-          <label className="plan-btn plan-btn-ghost plan-file-btn">
-            {fileName ? 'Choose a different backup' : 'Choose backup file'}
-            <input
-              type="file"
-              accept=".json,application/json"
-              onChange={(event) => void handleFile(event)}
-              disabled={importing}
-            />
-          </label>
-          {fileName && <span className="backup-file-name">{fileName}</span>}
-        </div>
-
-        {error && <p className="backup-error">{error}</p>}
-        {status && <p className="backup-status">{status}</p>}
-
-        {parsed && (
-          <div className="backup-preview">
-            <p className="backup-preview-summary">
-              {parsedPlanLabel} · {parsedPaidLabel}
-            </p>
-            {parsed.exportedAt && (
-              <p className="backup-preview-date">Exported {parsed.exportedAt.slice(0, 10)}</p>
-            )}
-            {parsed.droppedPlan > 0 && (
-              <p className="backup-preview-warning">
-                {parsed.droppedPlan} invalid plan {parsed.droppedPlan === 1 ? 'row was' : 'rows were'} ignored.
-              </p>
-            )}
-            {parsed.droppedPaid > 0 && (
-              <p className="backup-preview-warning">
-                {parsed.droppedPaid} paid {parsed.droppedPaid === 1 ? 'record was' : 'records were'} ignored.
-              </p>
-            )}
-            <p className="backup-warning">
-              Importing replaces the current plan and paid history on this browser. It
-              cannot be undone.
-            </p>
-            <button
-              type="button"
-              className="plan-btn plan-btn-primary"
-              onClick={handleImport}
-              disabled={importing}
-            >
-              {importing ? 'Importing…' : 'Import backup'}
-            </button>
+        <form
+          id={FORM_ID}
+          onSubmit={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            void form.handleSubmit()
+          }}
+        >
+          <div className="backup-actions">
+            <form.Field name="backupFile">
+              {(field) => (
+                <label className="plan-btn plan-btn-ghost plan-file-btn">
+                  {fileName ? 'Choose a different backup' : 'Choose backup file'}
+                  <input
+                    type="file"
+                    name={field.name}
+                    accept=".json,application/json"
+                    onBlur={field.handleBlur}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null
+                      event.target.value = ''
+                      field.handleChange(file)
+                      void readBackupFile(file)
+                    }}
+                    disabled={importing}
+                  />
+                </label>
+              )}
+            </form.Field>
+            {fileName && <span className="backup-file-name">{fileName}</span>}
           </div>
-        )}
+
+          {error && <p className="backup-error">{error}</p>}
+          {status && <p className="backup-status">{status}</p>}
+
+          {parsed && (
+            <div className="backup-preview">
+              <p className="backup-preview-summary">
+                {parsedPlanLabel} · {parsedPaidLabel}
+              </p>
+              {parsed.exportedAt && (
+                <p className="backup-preview-date">Exported {parsed.exportedAt.slice(0, 10)}</p>
+              )}
+              {parsed.droppedPlan > 0 && (
+                <p className="backup-preview-warning">
+                  {parsed.droppedPlan} invalid plan {parsed.droppedPlan === 1 ? 'row was' : 'rows were'} ignored.
+                </p>
+              )}
+              {parsed.droppedPaid > 0 && (
+                <p className="backup-preview-warning">
+                  {parsed.droppedPaid} paid {parsed.droppedPaid === 1 ? 'record was' : 'records were'} ignored.
+                </p>
+              )}
+              <p className="backup-warning">
+                Importing replaces the current plan and paid history on this browser. It
+                cannot be undone.
+              </p>
+              <button
+                type="submit"
+                className="plan-btn plan-btn-primary"
+                disabled={importing}
+              >
+                {importing ? 'Importing…' : 'Import backup'}
+              </button>
+            </div>
+          )}
+        </form>
       </section>
     </PlanModal>
   )

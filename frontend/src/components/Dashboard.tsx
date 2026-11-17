@@ -113,7 +113,6 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
   const [backupOpen, setBackupOpen] = useState(false)
   const [confirmClearCache, setConfirmClearCache] = useState(false)
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
-  const [draftFilters, setDraftFilters] = useState<TransactionFilters>({})
   const [appliedFilters, setAppliedFilters] = useState<TransactionFilters>({})
   const [isBlurred, setIsBlurred] = useState(false)
   const [revealedAccountId, setRevealedAccountId] = useState<string | null>(null)
@@ -296,18 +295,17 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     setView('accounts')
   }
 
-  function handleApplyFilters() {
-    setAppliedFilters(draftFilters)
+  function handleApplyFilters(next: TransactionFilters) {
+    setAppliedFilters(next)
   }
 
   function handleClearFilters() {
-    setDraftFilters({})
     setAppliedFilters({})
   }
 
   // Export the selected account as CSV. Only the date inputs are sent, so with
   // no dates chosen the file spans the account's whole history.
-  async function handleExportCsv() {
+  async function handleExportCsv(filters: TransactionFilters) {
     if (!selectedAccount || exporting) return
     if (!online) {
       addToast('Export unavailable offline', 'Reconnect to download a CSV')
@@ -317,7 +315,7 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     try {
       const { blob, filename } = await api.exportTransactionsCsv(
         selectedAccount.id,
-        draftFilters,
+        filters,
       )
       downloadBlob(blob, filename)
       addToast('CSV exported', selectedAccount.attributes.displayName)
@@ -547,8 +545,7 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
                 <section id="transactions-section">
                   <Filters
                     title={selectedAccount.attributes.displayName}
-                    value={draftFilters}
-                    onChange={setDraftFilters}
+                    value={appliedFilters}
                     onApply={handleApplyFilters}
                     onClear={handleClearFilters}
                     onExport={handleExportCsv}

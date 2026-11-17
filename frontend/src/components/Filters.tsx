@@ -1,69 +1,106 @@
+import { useForm } from '@tanstack/react-form'
 import type { TransactionFilters } from '../types'
 
 interface FiltersProps {
   title: string
   value: TransactionFilters
-  onChange: (next: TransactionFilters) => void
-  onApply: () => void
+  onApply: (next: TransactionFilters) => void
   onClear: () => void
-  onExport: () => void
+  onExport: (filters: TransactionFilters) => void
   exporting: boolean
 }
 
 export function Filters({
   title,
   value,
-  onChange,
   onApply,
   onClear,
   onExport,
   exporting,
 }: FiltersProps) {
+  const form = useForm({
+    defaultValues: value,
+    onSubmit: ({ value: next }) => onApply(next),
+  })
+
   return (
     <div className="tx-header">
       <h2 className="tx-title">{title}</h2>
-      <div className="filter-bar">
-        <select
-          className="filter-select"
-          value={value.status ?? ''}
-          onChange={(event) => onChange({ ...value, status: event.target.value })}
-        >
-          <option value="">All statuses</option>
-          <option value="SETTLED">Settled</option>
-          <option value="HELD">Pending</option>
-        </select>
+      <form
+        className="filter-bar"
+        onSubmit={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          void form.handleSubmit()
+        }}
+      >
+        <form.Field name="status">
+          {(field) => (
+            <select
+              className="filter-select"
+              name={field.name}
+              value={field.state.value ?? ''}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            >
+              <option value="">All statuses</option>
+              <option value="SETTLED">Settled</option>
+              <option value="HELD">Pending</option>
+            </select>
+          )}
+        </form.Field>
 
-        <input
-          type="date"
-          className="filter-input"
-          title="From date"
-          value={value.since ?? ''}
-          onChange={(event) => onChange({ ...value, since: event.target.value })}
-        />
+        <form.Field name="since">
+          {(field) => (
+            <input
+              type="date"
+              className="filter-input"
+              name={field.name}
+              title="From date"
+              value={field.state.value ?? ''}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          )}
+        </form.Field>
 
-        <input
-          type="date"
-          className="filter-input"
-          title="To date"
-          value={value.until ?? ''}
-          onChange={(event) => onChange({ ...value, until: event.target.value })}
-        />
+        <form.Field name="until">
+          {(field) => (
+            <input
+              type="date"
+              className="filter-input"
+              name={field.name}
+              title="To date"
+              value={field.state.value ?? ''}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          )}
+        </form.Field>
 
-        <button className="filter-btn filter-btn-primary" onClick={onApply}>
+        <button type="submit" className="filter-btn filter-btn-primary">
           Filter
         </button>
-        <button className="filter-btn filter-btn-secondary" onClick={onClear}>
+        <button
+          type="button"
+          className="filter-btn filter-btn-secondary"
+          onClick={() => {
+            form.reset({})
+            onClear()
+          }}
+        >
           Clear
         </button>
         <button
+          type="button"
           className="filter-btn filter-btn-export"
-          onClick={onExport}
+          onClick={() => onExport(form.state.values)}
           disabled={exporting}
           title="Export to CSV (uses the selected date range)"
         >
           {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
-      </div>
+      </form>
     </div>
   )
 }
