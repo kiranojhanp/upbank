@@ -1,4 +1,5 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState } from 'react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import {
   FREQUENCY_OPTIONS,
   MAX_EXPENSE_NAME_LENGTH,
@@ -22,12 +23,6 @@ interface PlanFormDialogProps {
   onDelete: (id: string) => void
 }
 
-interface FieldErrors {
-  name?: string
-  amount?: string
-  start?: string
-}
-
 const FORM_ID = 'plan-expense-form'
 
 export function PlanFormDialog({
@@ -37,41 +32,41 @@ export function PlanFormDialog({
   onSave,
   onDelete,
 }: PlanFormDialogProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
   // The parent mounts a fresh dialog for every add/edit, so initial state is
   // the whole reset: a cancelled edit can never leak into the next one.
-  const [name, setName] = useState(row?.name ?? '')
-  const [amount, setAmount] = useState(row ? formatCents(row.amountCents) : '')
-  const [frequency, setFrequency] = useState<Frequency>(row?.frequency ?? 'WEEKLY')
-  const [startDate, setStartDate] = useState(row?.startDate ?? '')
-  const [errors, setErrors] = useState<FieldErrors>({})
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const form = useForm({
+    defaultValues: {
+      name: row?.name ?? '',
+      amount: row ? formatCents(row.amountCents) : '',
+      frequency: (row?.frequency ?? 'WEEKLY') as Frequency,
+      startDate: row?.startDate ?? '',
+    },
+    onSubmit: ({ value }) => {
+      const cents = parseAmountToCents(value.amount)
+      if (cents === null) return
+      onSave(
+        {
+          name: value.name.trim(),
+          amountCents: cents,
+          frequency: value.frequency,
+          startDate: value.startDate,
+        },
+        row?.id,
+      )
+    },
+  })
+
+  const amount = useSelector(form.store, (state) => state.values.amount)
+  const frequency = useSelector(form.store, (state) => state.values.frequency)
+  const startDate = useSelector(form.store, (state) => state.values.startDate)
 
   const preview = useMemo(() => {
     const cents = parseAmountToCents(amount)
     if (cents === null || cents <= 0) return null
     return Math.round(weeklySetAsideCents(cents, frequency))
   }, [amount, frequency])
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmed = name.trim()
-    const next: FieldErrors = {}
-    if (!trimmed) next.name = 'Give the expense a name.'
-    const cents = parseAmountToCents(amount)
-    if (cents === null || cents <= 0) next.amount = 'Enter an amount above $0.'
-    if (!isIsoDate(startDate)) next.start = 'Choose the first occurrence.'
-    setErrors(next)
-    if (Object.keys(next).length > 0) return
-    onSave(
-      {
-        name: trimmed,
-        amountCents: cents as number,
-        frequency,
-        startDate,
-      },
-      row?.id,
-    )
-  }
 
   return (
     <PlanModal
@@ -128,65 +123,134 @@ export function PlanFormDialog({
         </div>
       }
     >
-      <form id={FORM_ID} className="plan-form" onSubmit={handleSubmit} noValidate>
-        <label className="plan-field">
-          <span className="plan-field-label">Expense name</span>
-          <input
-            className="plan-input"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={MAX_EXPENSE_NAME_LENGTH}
-            placeholder="Rent, electricity, car rego…"
-            autoFocus
-            required
-          />
-          {errors.name && <span className="plan-field-error">{errors.name}</span>}
-        </label>
-
-        <div className="plan-form-row">
-          <label className="plan-field">
-            <span className="plan-field-label">Billed amount</span>
-            <div className="plan-money-input">
-              <span className="plan-money-prefix">$</span>
+      <form
+        id={FORM_ID}
+        className="plan-form"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          void form.handleSubmit()
+        }}
+      >
+        <form.Field
+          name="name"
+          validators={{
+            onSubmit: ({ value }) =>
+              value.trim() ? undefined : 'Give the expense a name.',
+          }}
+        >
+          {(field) => (
+            <label className="plan-field">
+              <span className="plan-field-label">Expense name</span>
               <input
                 className="plan-input"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                inputMode="decimal"
-                placeholder="0.00"
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value)}
+                maxLength={MAX_EXPENSE_NAME_LENGTH}
+                placeholder="Rent, electricity, car rego…"
+                autoFocus
                 required
               />
-            </div>
-            {errors.amount && <span className="plan-field-error">{errors.amount}</span>}
-          </label>
+              {field.state.meta.errors.length > 0 && (
+                <span className="plan-field-error">
+                  {field.state.meta.errors.join(', ')}
+                </span>
+              )}
+            </label>
+          )}
+        </form.Field>
 
-          <label className="plan-field">
-            <span className="plan-field-label">Frequency</span>
-            <select
-              className="plan-select"
-              value={frequency}
-              onChange={(event) => setFrequency(event.target.value as Frequency)}
-            >
-              {FREQUENCY_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="plan-form-row">
+          <form.Field
+            name="amount"
+            validators={{
+              onSubmit: ({ value }) => {
+                const cents = parseAmountToCents(value)
+                return cents !== null && cents > 0
+                  ? undefined
+                  : 'Enter an amount above $0.'
+              },
+            }}
+          >
+            {(field) => (
+              <label className="plan-field">
+                <span className="plan-field-label">Billed amount</span>
+                <div className="plan-money-input">
+                  <span className="plan-money-prefix">$</span>
+                  <input
+                    className="plan-input"
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                {field.state.meta.errors.length > 0 && (
+                  <span className="plan-field-error">
+                    {field.state.meta.errors.join(', ')}
+                  </span>
+                )}
+              </label>
+            )}
+          </form.Field>
+
+          <form.Field name="frequency">
+            {(field) => (
+              <label className="plan-field">
+                <span className="plan-field-label">Frequency</span>
+                <select
+                  className="plan-select"
+                  name={field.name}
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) =>
+                    field.handleChange(event.target.value as Frequency)
+                  }
+                >
+                  {FREQUENCY_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </form.Field>
         </div>
 
-        <label className="plan-field">
-          <span className="plan-field-label">Start date</span>
-          <input
-            className="plan-input"
-            type="date"
-            value={startDate}
-            onChange={(event) => setStartDate(event.target.value)}
-            required
-          />
-          {errors.start && <span className="plan-field-error">{errors.start}</span>}
-        </label>
+        <form.Field
+          name="startDate"
+          validators={{
+            onSubmit: ({ value }) =>
+              isIsoDate(value) ? undefined : 'Choose the first occurrence.',
+          }}
+        >
+          {(field) => (
+            <label className="plan-field">
+              <span className="plan-field-label">Start date</span>
+              <input
+                className="plan-input"
+                type="date"
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value)}
+                required
+              />
+              {field.state.meta.errors.length > 0 && (
+                <span className="plan-field-error">
+                  {field.state.meta.errors.join(', ')}
+                </span>
+              )}
+            </label>
+          )}
+        </form.Field>
 
         {preview !== null && (
           <div className="plan-preview" aria-live="polite">
@@ -195,7 +259,8 @@ export function PlanFormDialog({
               <strong>{formatMoney(preview)}</strong>
             </div>
             <p className="plan-preview-note">
-              The first occurrence is {isIsoDate(startDate) ? formatCalendarDate(startDate) : 'the start date'};
+              The first occurrence is{' '}
+              {isIsoDate(startDate) ? formatCalendarDate(startDate) : 'the start date'};
               later occurrences follow the frequency.
             </p>
           </div>

@@ -17,6 +17,7 @@ appears in its own week.
 
 - **React 19 + TypeScript + Vite** — the app shell
 - **TanStack Query + TanStack DB** — infinite-query pagination with local-first row collections
+- **TanStack Form** — typed form state, field validation and submit handling for every user-input form
 - **OPFS SQLite** (`wa-sqlite`) — a durable, per-user cache of those collections
 - **Tailwind CSS v4 + shadcn/ui** — styling and primitives
 - **Playwright** — real-browser end-to-end tests against the production build
@@ -184,6 +185,13 @@ paid records whose expense is not in the backup, reports any invalid rows, then 
 app. The file is versioned and can be restored later from the same dialog. It contains
 budget names/amounts and paid transaction ids — not transaction descriptions or amounts —
 so treat the downloaded file as sensitive.
+
+### Forms
+
+Every data-entry surface uses `@tanstack/react-form`: login, account filters, the
+recurring-expense editor, CSV import, Mark Paid and backup restore. Fields own their values
+and validation, forms own submission, and the existing accessible labels/classes are kept so
+the UI and browser tests stay stable.
 
 ### The local cache (OPFS SQLite)
 

@@ -1,5 +1,6 @@
 import { useDbClient, useLiveQuery } from '@tanstack/react-db'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { SessionExpiredError, api } from '../api'
 import { formatMoney, localDateIso } from '../budget'
 import { getTransactionsDescriptor } from '../db'
@@ -56,10 +57,20 @@ export function MarkPaidDialog({
   onSessionExpired,
 }: MarkPaidDialogProps) {
   const dbClient = useDbClient()
-  const [accountId, setAccountId] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const confirmRef = useRef<() => void>(() => {})
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const form = useForm({
+    defaultValues: {
+      accountId: '',
+      transactionId: '',
+    },
+    onSubmit: () => confirmRef.current(),
+  })
+
+  const accountId = useSelector(form.store, (state) => state.values.accountId)
+  const selectedId = useSelector(form.store, (state) => state.values.transactionId)
 
   const entry = useMemo(
     () => (accountId ? getTransactionsDescriptor(accountId, {}) : null),
@@ -154,6 +165,12 @@ export function MarkPaidDialog({
     }
   }
 
+  useEffect(() => {
+    confirmRef.current = () => {
+      if (validation.ok && selected) onConfirm(selected)
+    }
+  }, [validation.ok, selected, onConfirm])
+
   async function loadTransactions() {
     if (!online || !accountId || !collection) return
     setLoadingTransactions(true)
@@ -216,10 +233,10 @@ export function MarkPaidDialog({
               Cancel
             </button>
             <button
-              type="button"
+              type="submit"
+              form="mark-paid-form"
               className="plan-btn plan-btn-primary"
               disabled={!validation.ok}
-              onClick={() => selected && validation.ok && onConfirm(selected)}
             >
               Mark paid
             </button>
@@ -227,32 +244,52 @@ export function MarkPaidDialog({
         </div>
       }
     >
-      <div className="mark-paid-meta">
-        <span>
-          Due {formatWeekDay(occurrence.date)} ·{' '}
-          {occurrence.expense.frequency.toLowerCase()}
-        </span>
-      </div>
+      <form
+        id="mark-paid-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          void form.handleSubmit()
+        }}
+      >
+        <div className="mark-paid-meta">
+          <span>
+            Due {formatWeekDay(occurrence.date)} ·{' '}
+            {occurrence.expense.frequency.toLowerCase()}
+          </span>
+        </div>
 
-      <label className="mark-paid-account">
-        <span>Up account</span>
-        <select
-          className="plan-select"
-          value={accountId}
-          onChange={(event) => {
-            setAccountId(event.target.value)
-            setSelectedId(null)
-            setLoadError(null)
+        <form.Field
+          name="accountId"
+          validators={{
+            onSubmit: ({ value }) =>
+              value ? undefined : 'Choose the Up account that paid this expense.',
           }}
         >
-          <option value="">Choose an account…</option>
-          {accounts.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.attributes.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
+          {(field) => (
+            <label className="mark-paid-account">
+              <span>Up account</span>
+              <select
+                className="plan-select"
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => {
+                  field.handleChange(event.target.value)
+                  form.setFieldValue('transactionId', '')
+                  setLoadError(null)
+                }}
+              >
+                <option value="">Choose an account…</option>
+                {accounts.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.attributes.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </form.Field>
 
       {!accountId ? (
         <p className="mark-paid-empty">
@@ -296,22 +333,24 @@ export function MarkPaidDialog({
           )}
 
           {transactions.length > 0 ? (
-            <div className="mark-paid-list">
-              {transactions.map((transaction) => {
-                const isSelected = selectedId === transaction.id
-                const usedFor = usedTransactions.get(transaction.id)
-                const amount = transaction.attributes.amount.valueInBaseUnits
-                const thisWeek =
-                  transactionDay(transaction) >= startOfWeek(occurrence.date) &&
-                  transactionDay(transaction) <= endOfWeek(occurrence.date)
-                return (
-                  <button
-                    key={transaction.id}
-                    type="button"
-                    className={`week-tx week-tx-button mark-paid-row${isSelected ? ' is-selected' : ''}`}
-                    disabled={Boolean(usedFor)}
-                    aria-pressed={isSelected}
-                    onClick={() => setSelectedId(transaction.id)}
+            <form.Field name="transactionId">
+              {(field) => (
+                <div className="mark-paid-list">
+                  {transactions.map((transaction) => {
+                    const isSelected = field.state.value === transaction.id
+                    const usedFor = usedTransactions.get(transaction.id)
+                    const amount = transaction.attributes.amount.valueInBaseUnits
+                    const thisWeek =
+                      transactionDay(transaction) >= startOfWeek(occurrence.date) &&
+                      transactionDay(transaction) <= endOfWeek(occurrence.date)
+                    return (
+                      <button
+                        key={transaction.id}
+                        type="button"
+                        className={`week-tx week-tx-button mark-paid-row${isSelected ? ' is-selected' : ''}`}
+                        disabled={Boolean(usedFor)}
+                        aria-pressed={isSelected}
+                    onClick={() => field.handleChange(transaction.id)}
                   >
                     <span className="week-tx-date">
                       {formatWeekDay(transactionDay(transaction))}
@@ -332,17 +371,19 @@ export function MarkPaidDialog({
                     >
                       {signMoney(transaction)}
                     </span>
-                    {usedFor ? (
-                      <span className="mark-paid-used">Used for {usedFor}</span>
-                    ) : (
-                      <span className="mark-paid-check">
-                        {isSelected ? 'Selected' : 'Choose'}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
+                        {usedFor ? (
+                          <span className="mark-paid-used">Used for {usedFor}</span>
+                        ) : (
+                          <span className="mark-paid-check">
+                            {field.state.value === transaction.id ? 'Selected' : 'Choose'}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </form.Field>
           ) : !loadingTransactions ? (
             <p className="mark-paid-empty">
               {online
@@ -361,6 +402,7 @@ export function MarkPaidDialog({
           ))}
         </>
       )}
+      </form>
     </PlanModal>
   )
 }
