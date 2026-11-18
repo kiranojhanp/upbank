@@ -54,8 +54,9 @@ occurrence appears in its own week.
   restored from a per-user local cache with no network round trip
 - Installable PWA: a service worker precaches the whole app shell, so the installed app
   opens with no network at all
-- Background balance sync on reconnect, on returning to the tab, from a Refresh button, and
-  from a slow account poll; Refresh also refetches every loaded transaction page
+- Background sync on reconnect, on returning to the tab, from a Refresh button, and from a
+  slow poll keeps balances and the visible account's loaded transaction pages current;
+  refetching preserves the loaded page count
 
 ## Screenshots
 
@@ -98,8 +99,9 @@ bound the exposure; see [Security](#security) for the full model.
 
 Up webhooks need a publicly reachable HTTPS endpoint, which a static site cannot provide.
 Instead the app refreshes on `online`, when the tab regains focus, from the Refresh
-button, and via a slow timer while the tab is visible. The timer refreshes balances only,
-so it never collapses a transaction list you have paged through.
+button, and via a slow timer while the tab is visible. These syncs refresh balances and,
+when an account view is mounted, its loaded transaction pages. Refetching an infinite
+query preserves the page count, so a list you have paged through is not collapsed.
 
 ## Data model: local-first with a durable cache
 
@@ -124,9 +126,9 @@ infinite query and mirrored into a local-only TanStack DB collection:
   with direct inserts/deletes, and `useLiveQuery` still reads it for the offline seed and
   for non-network renders; the visible list is the deduplicated page sequence.
 - `Refresh` calls `refetch()` on the infinite query, which refetches all loaded pages and
-  keeps the page count. Priority order: current data first, then balance poll, then manual
-  full refresh. Tab focus and reconnect refresh balances only, so a paged list is never
-  collapsed by switching tabs.
+  keeps the page count. A restored cache page also revalidates once when it mounts online;
+  tab focus, reconnect and the slow poll refresh balances plus the visible account's
+  transaction pages. Refetching never collapses the loaded pages.
 - A new `DbClient` + `QueryClient` is created per signed-in session. Ending the session
   (sign out, a rejected token, or a 401/403) drops the whole store and wipes its rows,
   rather than scrubbing rows from a client that still has query observers attached.
@@ -247,19 +249,21 @@ Restored rows render before the network is consulted.
 
 ### Offline-first fetching
 
-A filter/account combination only hits the network when there is no usable cache. With a
-warm cache (`rows > 0`) the restored rows seed the infinite query, which is considered
-fresh and makes no request. Sync happens on:
+With a warm cache (`rows > 0`) the restored rows seed the view immediately. When online, a
+page restored from the durable cache is revalidated once in the background and an older
+in-memory query is revalidated on remount, so a browser reload cannot show yesterday's
+transactions while balances are fresh. Sync happens on:
 
-- **reconnect** — the browser's `online` event refreshes balances,
-- **tab focus** — returning to a hidden tab refreshes balances,
+- **reconnect** — refreshes balances and the visible account's transaction pages,
+- **tab focus** — refreshes balances and the visible account's transaction pages,
 - **the Refresh button** — refetches accounts and every loaded transaction page,
-- **the visible-tab poll** — balances only, every 60 seconds,
-- **a first visit** for that account/filter, when no cache exists,
-- **a filter or account change** — a new infinite query key.
+- **the visible-tab poll** — balances and the visible account's pages, every 60 seconds,
+- **a restored cache** — revalidates when an account view mounts, and
+- **a first visit / filter or account change** — a new infinite query key.
 
-All of these pause while the tab is hidden or offline. If a cache's rows are gone but its
-metadata survived, a short fallback timer forces a fetch instead of hanging on "Loading".
+The loaded page count is preserved by every refetch. These syncs pause while the tab is
+hidden or offline; cached rows remain readable. If a cache's rows are gone but its metadata
+survived, a short fallback timer forces a fetch instead of hanging on "Loading".
 Refresh and "Load more" failures now surface a toast or an inline retry instead of leaving
 stale data silently; rate-limited and network failures retry with jittered exponential
 backoff.
@@ -609,8 +613,8 @@ token or a live Up account: `e2e/support/up-api.ts` installs a stateful fake for
 | Spec | Coverage |
 | --- | --- |
 | `auth.spec.ts` | validation, invalid token, successful login, reload, sign out and cache wipe |
-| `transactions.spec.ts` | balances, filters, cursor pagination, refresh preserving pages, detail panel, CSV download/formula guard, error toasts |
-| `offline.spec.ts` | service worker + OPFS restore on a cold offline reload, then `filter[until]` load-more anchoring |
+| `transactions.spec.ts` | balances, filters, cursor pagination, refresh/new-transaction revalidation preserving pages, reload revalidation, detail panel, CSV download/formula guard, error toasts |
+| `offline.spec.ts` | service worker + OPFS restore on a cold offline reload, then online revalidation and cursor-based load-more |
 | `security.spec.ts` | CSP, no token in the DOM, only app/Up origins, 401 token+cache wipe |
 | `resilience.spec.ts` | empty account state and the mobile navigation drawer |
 | `plan.spec.ts` | recurring plan maths, start dates, bulk delete, import/export, mobile access |

@@ -141,6 +141,7 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [timedOutEntry, setTimedOutEntry] = useState<string | null>(null)
+  const [transactionsRefreshAt, setTransactionsRefreshAt] = useState(0)
 
   const toastId = useRef(0)
   const refreshingRef = useRef(false)
@@ -278,7 +279,14 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     setRefreshing(true)
     try {
       await accountsCollection.utils.refetch({ throwOnError: true })
-      await transactionsRef.current?.refresh()
+      if (transactionsRef.current) {
+        await transactionsRef.current.refresh()
+      } else {
+        // No account view is mounted. Remember that transactions are due a
+        // refresh so the next account view revalidates instead of restoring a
+        // pre-refresh cache page.
+        setTransactionsRefreshAt(Date.now())
+      }
       writeLastSynced(uid, Date.now())
     } catch (error) {
       if (error instanceof SessionExpiredError) {
@@ -292,28 +300,46 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     }
   }, [accountsCollection, uid, onSessionExpired, addToast])
 
-  // Lighter sync for polling, focus and reconnect. It deliberately refreshes
-  // balances only, so returning to the tab cannot reset the transaction pages.
+  // Background sync refreshes balances, then the visible account's loaded
+  // transaction pages. Refetching an infinite query preserves the page count,
+  // so this cannot collapse a list the user has paged through.
   const refreshAccounts = useCallback(
-    async (notify: boolean) => {
+    async (notify: boolean, includeTransactions = false) => {
+      if (refreshingRef.current) return
       try {
         await accountsCollection.utils.refetch({ throwOnError: true })
-        writeLastSynced(uid, Date.now())
       } catch (error) {
         if (error instanceof SessionExpiredError) {
           onSessionExpired()
           return
         }
         if (notify) addToast('Could not refresh balances', errorDetail(error))
+        return
       }
+
+      if (includeTransactions) {
+        if (transactionsRef.current) {
+          try {
+            await transactionsRef.current.refresh()
+          } catch (error) {
+            if (error instanceof SessionExpiredError) {
+              onSessionExpired()
+              return
+            }
+            if (notify) addToast('Could not refresh transactions', errorDetail(error))
+          }
+        } else {
+          setTransactionsRefreshAt(Date.now())
+        }
+      }
+      writeLastSynced(uid, Date.now())
     },
     [accountsCollection, uid, onSessionExpired, addToast],
   )
 
-  // Coming back online refreshes balances. Transactions refresh from the
-  // Refresh button or a filter change, never by collapsing the paged list.
+  // Coming back online refreshes balances and the visible transaction pages.
   useEffect(() => {
-    const onOnline = () => void refreshAccounts(true)
+    const onOnline = () => void refreshAccounts(true, true)
     window.addEventListener('online', onOnline)
     return () => window.removeEventListener('online', onOnline)
   }, [refreshAccounts])
@@ -374,19 +400,23 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
     }
   }
 
-  // Up has no client-side event stream, so a slow account poll stands in for
-  // the old webhook feed while the tab is visible.
+  // Up has no client-side event stream, so a slow poll stands in for the old
+  // webhook feed while the tab is visible. It refreshes balances plus the
+  // visible account's loaded transaction pages.
   useEffect(() => {
     if (!online || !visible) return
-    const interval = window.setInterval(() => void refreshAccounts(false), POLL_INTERVAL_MS)
+    const interval = window.setInterval(
+      () => void refreshAccounts(false, true),
+      POLL_INTERVAL_MS,
+    )
     return () => window.clearInterval(interval)
   }, [online, visible, refreshAccounts])
 
-  // Returning to the tab refreshes balances only; the transaction list keeps
-  // its loaded pages. Use Refresh for a full transaction refetch.
+  // Returning to the tab refreshes balances and the visible transaction pages,
+  // preserving the number of loaded pages.
   const wasVisible = useRef(visible)
   useEffect(() => {
-    if (visible && !wasVisible.current) void refreshAccounts(false)
+    if (visible && !wasVisible.current) void refreshAccounts(false, true)
     wasVisible.current = visible
   }, [visible, refreshAccounts])
 
@@ -608,6 +638,7 @@ export function Dashboard({ uid, cacheAvailable, onSessionExpired, onSignOut }: 
                       filters={appliedFilters}
                       collection={transactionsCollection}
                       seed={seed}
+                      refreshAt={transactionsRefreshAt}
                       online={online}
                       isJoint={Boolean(isJoint)}
                       onSessionExpired={onSessionExpired}

@@ -84,8 +84,9 @@ export function useTransactionsInfinite({
     },
     initialPageParam: null,
     getNextPageParam: nextTransactionsPageParam,
-    // A warm cache renders without touching the network. Once the first page is
-    // restored, only an explicit Refresh (or a filter change) refetches.
+    // The query itself renders a warm cache without a network request. The view
+    // revalidates a restored page once online, and explicit/background syncs
+    // call refetch() while keeping the loaded page count.
     enabled: online || hasSeed,
     staleTime: hasSeed ? Infinity : 0,
     gcTime: 5 * 60_000,

@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures'
 
 test.describe('offline and service worker', () => {
-  test('restores cached accounts and transactions, then anchors load-more', async ({
+  test('restores cached data, revalidates online, then loads the next page', async ({
     app,
     api,
     page,
@@ -23,14 +23,18 @@ test.describe('offline and service worker', () => {
     await app.expectTransaction('Coffee')
     await app.expectOfflineNote()
 
+    const beforeReconnect = api.transactionRequests.length
     await context.setOffline(false)
+    // Reconnect revalidates the restored page; a fresh cursor is then safe.
+    await expect.poll(() => api.transactionRequests.length).toBeGreaterThan(beforeReconnect)
     await expect(page.getByRole('button', { name: 'Load more' })).toBeEnabled()
     await app.loadMore()
     await app.expectTransaction('Older coffee')
 
-    await expect.poll(() => api.anchorRequests.length).toBeGreaterThan(0)
-    expect(api.anchorRequests.at(-1)?.searchParams.get('filter[until]')).toBe(
-      '2026-11-02T09:00:00Z',
-    )
+    expect(
+      api.transactionRequests.some(
+        (url) => url.searchParams.get('page[after]') === 'cursor-2',
+      ),
+    ).toBe(true)
   })
 })
