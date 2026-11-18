@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test'
+import type { Transaction } from '../../src/types'
 
 export const VALID_TOKEN = 'pat-e2e'
 const API_ORIGIN = 'https://api.up.com.au'
@@ -196,6 +197,15 @@ export class MockUpApi {
   failNextPage = false
   requests: URL[] = []
   transactionRequests: URL[] = []
+  extraTransactions: Transaction[] = []
+
+  prependTransaction(transaction: Transaction): void {
+    this.extraTransactions.unshift(transaction)
+  }
+
+  private pageOne(): Transaction[] {
+    return [...this.extraTransactions, ...(FIRST_PAGE as Transaction[])]
+  }
 
   async install(page: Page): Promise<void> {
     await page.route(`${API_ORIGIN}/**`, (route) => this.handle(route))
@@ -288,7 +298,7 @@ export class MockUpApi {
     // The week view asks for a date-windowed page of up to 100 per account.
     // Filter the fixture by local-ish date so it behaves like Up's window.
     if (allPages && (since || until)) {
-      const windowed = [...FIRST_PAGE, ...SECOND_PAGE].filter((tx) => {
+      const windowed = [...this.pageOne(), ...SECOND_PAGE].filter((tx) => {
         const day = tx.attributes.createdAt.slice(0, 10)
         return (!since || day >= since) && (!until || day < until)
       })
@@ -302,15 +312,17 @@ export class MockUpApi {
     }
 
     if (status === 'HELD') {
-      await this.fulfill(route, 200, list([PENDING]))
+      const held = this.pageOne().filter((tx) => tx.attributes.status === 'HELD')
+      await this.fulfill(route, 200, list(held))
       return
     }
 
-    const settled = FIRST_PAGE.filter((tx) => tx.attributes.status === 'SETTLED')
+    const firstPage = this.pageOne()
+    const settled = firstPage.filter((tx) => tx.attributes.status === 'SETTLED')
     await this.fulfill(
       route,
       200,
-      list(status === 'SETTLED' ? settled : FIRST_PAGE, NEXT_PAGE_URL),
+      list(status === 'SETTLED' ? settled : firstPage, NEXT_PAGE_URL),
     )
   }
 

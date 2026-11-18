@@ -38,6 +38,7 @@ interface TransactionsViewProps {
   filters: TransactionFilters
   collection: Collection<Transaction, string>
   seed: TransactionsSeed | null
+  refreshAt: number
   online: boolean
   isJoint: boolean
   onSessionExpired: () => void
@@ -57,6 +58,7 @@ export const TransactionsView = forwardRef<TransactionsHandle, TransactionsViewP
       filters,
       collection,
       seed,
+      refreshAt,
       online,
       isJoint,
       onSessionExpired,
@@ -72,6 +74,41 @@ export const TransactionsView = forwardRef<TransactionsHandle, TransactionsViewP
       online,
     })
     const [panelTransaction, setPanelTransaction] = useState<Transaction | null>(null)
+    const revalidatedRestore = useRef(false)
+
+    // A restored cache is shown immediately, but it may predate new Up
+    // transactions. Revalidate it once online (and revalidate older in-memory
+    // queries on remount) without replacing the loaded page count.
+    const restoredFromCache = query.data?.pages[0]?.restored === true
+    const queryIsStale =
+      query.dataUpdatedAt > 0 && Date.now() - query.dataUpdatedAt > 60_000
+    const refreshRequestedElsewhere = refreshAt > query.dataUpdatedAt
+    useEffect(() => {
+      if (
+        !online ||
+        revalidatedRestore.current ||
+        query.isFetching ||
+        (!restoredFromCache && !queryIsStale && !refreshRequestedElsewhere)
+      ) {
+        return
+      }
+      revalidatedRestore.current = true
+      void query.refetch({ throwOnError: true }).catch((error) => {
+        if (error instanceof SessionExpiredError) {
+          onSessionExpired()
+          return
+        }
+        onNotify('Could not refresh transactions', errorDetail(error))
+      })
+    }, [
+      online,
+      query,
+      restoredFromCache,
+      queryIsStale,
+      refreshRequestedElsewhere,
+      onNotify,
+      onSessionExpired,
+    ])
 
     useImperativeHandle(
       ref,

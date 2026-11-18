@@ -105,6 +105,71 @@ test.describe('transactions', () => {
     expect(csv).toContain('\r\n')
   })
 
+  test('refreshes the newest transaction while viewing an account', async ({ app, api }) => {
+    const newest = {
+      id: 'tx-newest',
+      attributes: {
+        description: 'Newest coffee',
+        createdAt: '2026-11-18T09:00:00Z',
+        settledAt: '2026-11-18T09:00:01Z',
+        status: 'SETTLED',
+        amount: { value: '-7.00', currencyCode: 'AUD', valueInBaseUnits: -700 },
+      },
+    }
+    await openSpending(app)
+    await app.waitForOfflineData()
+    api.prependTransaction(newest)
+    await app.refresh()
+    await app.expectTransaction('Newest coffee')
+  })
+
+  test('refresh from Week fetches the latest when opening the account', async ({
+    app,
+    api,
+  }) => {
+    const newest = {
+      id: 'tx-newest-week',
+      attributes: {
+        description: 'Newest from week refresh',
+        createdAt: '2026-11-18T10:00:00Z',
+        settledAt: '2026-11-18T10:00:01Z',
+        status: 'SETTLED',
+        amount: { value: '-7.50', currencyCode: 'AUD', valueInBaseUnits: -750 },
+      },
+    }
+    await openSpending(app)
+    await app.waitForOfflineData()
+    api.prependTransaction(newest)
+    await app.openWeek()
+    await app.refresh()
+    await app.selectAccount()
+    await app.expectTransaction('Newest from week refresh')
+  })
+
+  test('a reload fetches the latest transaction when reopening an account', async ({
+    app,
+    api,
+    page,
+  }) => {
+    const newest = {
+      id: 'tx-newest-reload',
+      attributes: {
+        description: 'Newest after reload',
+        createdAt: '2026-11-18T11:00:00Z',
+        settledAt: '2026-11-18T11:00:01Z',
+        status: 'SETTLED',
+        amount: { value: '-8.00', currencyCode: 'AUD', valueInBaseUnits: -800 },
+      },
+    }
+    await openSpending(app)
+    await app.waitForOfflineData()
+    api.prependTransaction(newest)
+    await page.reload()
+    await app.expectDashboard()
+    await app.selectAccount()
+    await app.expectTransaction('Newest after reload')
+  })
+
   test('shows a toast when balances cannot be refreshed', async ({ app, api, page }) => {
     await openSpending(app)
     api.failAccounts = true
